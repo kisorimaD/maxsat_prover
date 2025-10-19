@@ -7,9 +7,11 @@
 
 using namespace std;
 
-map<int, string> ID2VAR;
-map<string, int> VAR2ID;
-int ID_COUNTER = 1;
+extern map<int, string> ID2VAR;
+extern map<string, int> VAR2ID;
+extern int ID_COUNTER;
+
+void preprocess();
 
 class Literal
 {
@@ -23,8 +25,7 @@ public:
     bool inv;
 };
 
-map<int, Literal *> ID2LIT;
-Literal UNKNOWN_LITERAL = Literal();
+extern Literal UNKNOWN_LITERAL;
 
 struct LiteralPtrLess
 {
@@ -52,8 +53,6 @@ public:
     bool empty;
 };
 
-Clause UNKNOWN_CLAUSE = Clause();
-
 struct RRuleInfo
 {
     int clauses_reduced;
@@ -64,18 +63,19 @@ class CNF
 {
 
 public:
-    CNF(){}
+    CNF() {}
     CNF(vector<Clause *> clauses) : clauses(clauses) {}
-    CNF(CNF &cnf) {
+    CNF(CNF &cnf)
+    {
         clauses.resize(cnf.clauses.size());
-        for (int i = 0; i < clauses.size(); ++i)
+        for (int i = 0; i < (int)clauses.size(); ++i)
         {
-            clauses[i] = new Clause(*cnf.clauses[i]); 
+            clauses[i] = new Clause(*cnf.clauses[i]);
         }
     }
 
-    vector <int> branch(vector <int> ids);
-    
+    vector<int> branch(vector<int> ids);
+
     vector<Clause *> clauses;
 
 private:
@@ -99,4 +99,7 @@ enum LitType
 
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type);
 
+double branching_factor(const vector<int> &a, double tol = 1e-12);
+
 void print_clause(Clause &c);
+void print_cnf(CNF &cnf);

@@ -3,8 +3,14 @@
 #include <algorithm>
 #include <set>
 #include <assert.h>
+#include <math.h>
 
 using namespace std;
+
+map<int, string> ID2VAR;
+map<string, int> VAR2ID;
+int ID_COUNTER = 1;
+Literal UNKNOWN_LITERAL = Literal();
 
 Literal::Literal()
 {
@@ -43,7 +49,6 @@ Literal Literal::neg() const
 
 vector<int> CNF::branch(vector<int> ids)
 {
-    // Строим таблицу истинностей
 
     int k = ids.size();
 
@@ -89,6 +94,70 @@ vector<int> CNF::branch(vector<int> ids)
     }
 
     return branch;
+}
+
+double f_value(double x, const vector<int> &a)
+{ // compute sum_i x^{-a_i} - 1
+    long double s = 0.0L;
+    for (int ai : a)
+    {
+        s += powl((long double)x, (long double)(-ai));
+    }
+    return (double)(s - 1.0L);
+}
+
+double branching_factor(const vector<int> &a, double tol)
+{
+    double low = 1.0 + 1e-14;
+    double high = 2.5;
+
+    auto f = [&](double x)
+    { return f_value(x, a); };
+
+    for (int iter = 0; iter < 80; ++iter)
+    {
+        double fv = f(high);
+        if (fv < 0.0)
+            break;
+        high *= 1.5;
+        if (high > 1e8)
+            throw runtime_error("Cannot bracket root: high grew too large");
+    }
+
+    double fl = f(low);
+    double fh = f(high);
+    if (!(fl > 0.0 && fh < 0.0))
+    {
+        // numerical safeguard: if fl already <= 0 (rare), move low slightly toward 1
+        if (fl <= 0.0)
+            low = 1.0 + 1e-16, fl = f(low);
+        if (!(fl > 0.0 && fh < 0.0))
+        {
+            // as ultimate fallback, try expanding high more
+            for (int iter = 0; iter < 200 && fh >= 0.0; ++iter)
+            {
+                high *= 1.5;
+                fh = f(high);
+                if (high > 1e12)
+                    break;
+            }
+            if (!(fl > 0.0 && fh < 0.0))
+                throw runtime_error("Failed to bracket root (fl, fh) = (" + to_string(fl) + ", " + to_string(fh) + ")");
+        }
+    }
+
+    for (int iter = 0; iter < 2000; ++iter)
+    {
+        double mid = 0.5 * (low + high);
+        double fm = f(mid);
+        if (fm > 0.0)
+            low = mid;
+        else
+            high = mid;
+        if (fabs(high - low) < tol * max(1.0, mid))
+            break;
+    }
+    return 0.5 * (low + high);
 }
 
 void print_clause(Clause &c)
@@ -222,79 +291,4 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
     }
 
     return ans;
-}
-
-void test_basics()
-{
-    Literal a("a");
-    Literal b("b");
-
-    Literal na = a.neg();
-    vector<Literal *> vec_lits = {&a, &b, &na, &UNKNOWN_LITERAL};
-    Clause c(vec_lits);
-    Clause d = c;
-
-    Literal nb = b.neg();
-
-    d.lits.insert(&nb);
-
-    print_clause(c);
-    print_clause(d);
-
-    Clause unk;
-
-    print_clause(unk);
-}
-
-void test_three_vars()
-{
-
-    CNF cnf;
-
-    CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
-    print_cnf(*with_x);
-
-    cout << "Добавляем переменную y (2, 3)-литерал\n";
-
-    vector<CNF *> with_y = add_new_var(with_x, "y", 3, 2, ANY);
-
-    vector<CNF *> with_z;
-    cout << with_y.size() << endl;
-
-    for (CNF *br : with_y)
-    {
-        auto new_vars = add_new_var(br, "z", 3, 2, ANY);
-
-        with_z.resize(with_z.size() + new_vars.size());
-        copy(new_vars.begin(), new_vars.end(), with_z.rbegin());
-    }
-
-    cout << with_z.size() << endl;
-}
-
-void test_simple_branch()
-{
-    CNF cnf;
-
-    CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
-    print_cnf(*with_x);
-
-    Literal x = Literal("x");
-
-    assert(x.id == 1);
-
-    vector<int> b = with_x->branch({x.id});
-
-    for (int f : b)
-    {
-        cout << f << " ";
-    }
-    cout << endl;
-}
-
-int main()
-{
-    preprocess();
-
-    test_simple_branch();
 }

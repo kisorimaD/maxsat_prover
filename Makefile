@@ -1,13 +1,27 @@
-all:
-	g++ -g -D_GLIBCXX_ASSERTIONS -O0 -o main cnf.cpp
+CXX = g++
+CXXFLAGS = -O2 -Wall -std=c++11 -Iinclude
+LDFLAGS = 
 
-run_debug: 
-	g++ -g -O1 -fsanitize=address -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS cnf.cpp -o main
-	./main
+EXE = maxsat_prover
+SRCDIR = src
+BINDIR = obj
 
+OBJECTS = $(patsubst $(SRCDIR)/%.cpp,$(BINDIR)/%.o,$(wildcard $(SRCDIR)/*.cpp))
 
-run: all
-	./main
+all: $(EXE)
+
+$(EXE): $(BINDIR) $(OBJECTS)
+	$(CXX) $(OBJECTS) -o $(EXE) $(LDFLAGS)
+	
+$(BINDIR)/%.o: $(SRCDIR)/%.cpp
+	$(CXX) $(CXXFLAGS) -c -MMD -o $@ $<
+
+include $(wildcard $(BINDIR)/*.d)
+
+$(BINDIR):
+	mkdir -p $(BINDIR)
 
 clean:
-	rm main
+	rm -rf $(BINDIR) $(EXE)
+
+.PHONY: clean all
