@@ -305,8 +305,18 @@ double f_value(double x, const vector<int> &a)
     return (double)(s - 1.0L);
 }
 
+map <vector <int>, double> branching_factor_cache;
+
 double branching_factor(const vector<int> &a, double tol)
 {
+    vector <int> b = a;
+    sort(b.begin(), b.end());
+
+    if (branching_factor_cache.count(b) != 0)
+    {
+        return branching_factor_cache[b];
+    }
+
     double low = 1.0 - 1e-14;
     double high = 2.5;
 
@@ -371,6 +381,9 @@ double branching_factor(const vector<int> &a, double tol)
         if (fabs(high - low) < tol * max(1.0, mid))
             break;
     }
+
+    branching_factor_cache[b] = 0.5 * (low + high);
+
     return 0.5 * (low + high);
 }
 
