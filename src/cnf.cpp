@@ -47,7 +47,14 @@ Literal Literal::neg() const
     return Literal(id, !inv);
 }
 
-vector<int> CNF::branch(vector<int> ids)
+bool is_A_subset_of_B(int A, int B)
+{
+    int A_without_B = (A | B) ^ B;
+
+    return A_without_B == 0;
+}
+
+void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask, vector<int> &reduced_clauses)
 {
 
     int k = ids.size();
@@ -57,14 +64,17 @@ vector<int> CNF::branch(vector<int> ids)
     for (int i = 0; i < k; ++i)
         id2ind[ids[i]] = i;
 
-    vector<int> branch(1 << k);
-
     for (int mask = 0; mask < (1 << k); ++mask)
     {
         int reduced = 0;
 
-        for (Clause *c : clauses)
+        int tc_mask = 0;
+
+        // for (Clause *c : clauses)
+        for (int clause_ind = 0; clause_ind < (int)cnf.clauses.size(); ++clause_ind)
         {
+            Clause *c = cnf.clauses[clause_ind];
+
             bool find_another_literal = false;
             bool find_1 = false;
 
@@ -86,14 +96,203 @@ vector<int> CNF::branch(vector<int> ids)
 
             if (find_1 || !find_another_literal)
             {
+                tc_mask ^= (1 << clause_ind);
                 reduced++;
             }
         }
 
-        branch[mask] = reduced;
+        clauses_mask[mask] = tc_mask;
+        reduced_clauses[mask] = reduced;
+    }
+}
+
+vector<int> CNF::branch(vector<int> ids)
+{
+
+    int k = ids.size();
+
+    vector<int> branch;
+
+    vector<int> clauses_mask(1 << k);
+    vector<int> reduced_clauses(1 << k);
+
+    calculate_variants(*this, ids, clauses_mask, reduced_clauses);
+
+    for (int mask = 0; mask < (1 << k); ++mask)
+    {
+        bool is_subset = false;
+
+        for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
+        {
+            if (mask == other_mask)
+                continue;
+
+            if (clauses_mask[mask] == clauses_mask[other_mask])
+            {
+                if (other_mask < mask)
+                {
+                    is_subset = true;
+                }
+                else
+                {
+                    continue;
+                }
+            }
+
+            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
+            {
+                is_subset = true;
+                break;
+            }
+        }
+
+        if (!is_subset)
+        {
+            branch.push_back(reduced_clauses[mask]);
+        }
     }
 
     return branch;
+}
+
+bool get_next_product(vector<int> &cs)
+{
+    int i = cs.size() - 1;
+
+    while (i)
+    {
+        if (cs[i] < i)
+        {
+            cs[i]++;
+            return true;
+        }
+        else
+        {
+            cs[i] = 0;
+            i--;
+        }
+    }
+    return false;
+}
+
+int count_set_bits(int n)
+{
+    int cnt = 0;
+    while(n)
+    {
+        n &= (n - 1);
+        cnt++;
+    }
+    return cnt;
+}
+
+vector<int> CNF::branch_group(vector<int> ids)
+{
+    int k = ids.size();
+
+    vector<int> branch;
+
+    // set <int> true_clauses_masks;
+    vector<int> clauses_mask(1 << k);
+    vector<int> reduced_clauses(1 << k);
+
+    calculate_variants(*this, ids, clauses_mask, reduced_clauses);
+
+    vector<int> rclauses;
+
+    for (int mask = 0; mask < (1 << k); ++mask)
+    {
+        bool is_subset = false;
+
+        for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
+        {
+            if (mask == other_mask)
+                continue;
+
+            if (clauses_mask[mask] == clauses_mask[other_mask])
+            {
+                if (other_mask < mask)
+                {
+                    is_subset = true;
+                }
+                else
+                {
+                    continue;
+                }
+            }
+
+            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
+            {
+                is_subset = true;
+                break;
+            }
+        }
+
+        if (!is_subset)
+        {
+            rclauses.push_back(clauses_mask[mask]);
+        }
+    }
+
+    int rcnt = rclauses.size();
+
+    double mn_factor = 100000;
+    vector<int> mn_branch;
+
+    vector<int> cs(rcnt, 0);
+
+    vector <int> now_branch;
+
+    do
+    {
+        bool got_zero = false;
+
+        now_branch.clear();
+
+        for(int c = 0; c < rcnt; ++c)
+        {
+            bool has_class = false;
+            int gclauses = 0;
+            for(int i = 0; i < rcnt; ++i)
+            {
+                if(cs[i] == c)
+                {
+                    if (!has_class)
+                        gclauses = rclauses[i];
+                    else
+                        gclauses &= rclauses[i];
+
+                    has_class = true;
+                }
+            }
+
+            if (has_class)
+            {
+                if (gclauses == 0)
+                {
+                    got_zero = true;
+                    break;
+                }
+                now_branch.push_back(count_set_bits(gclauses));
+            }
+        }
+
+        if (got_zero)
+        {
+            continue;
+        }
+
+        double now_factor = branching_factor(now_branch);
+
+        if (now_factor < mn_factor)
+        {
+            mn_factor = now_factor;
+            mn_branch = now_branch;
+        }
+
+    } while (get_next_product(cs));
+
+    return mn_branch;
 }
 
 double f_value(double x, const vector<int> &a)
@@ -108,7 +307,7 @@ double f_value(double x, const vector<int> &a)
 
 double branching_factor(const vector<int> &a, double tol)
 {
-    double low = 1.0 + 1e-14;
+    double low = 1.0 - 1e-14;
     double high = 2.5;
 
     auto f = [&](double x)
@@ -120,8 +319,15 @@ double branching_factor(const vector<int> &a, double tol)
         if (fv < 0.0)
             break;
         high *= 1.5;
-        if (high > 1e8)
-            throw runtime_error("Cannot bracket root: high grew too large");
+        if (high > 1e8){
+            string v_str = "( ";
+                for (int n : a)
+                {
+                    v_str += (to_string(n) + " ");
+                }
+                v_str += ")";
+            throw runtime_error("Cannot bracket root: high grew too large. Branch: " + v_str);
+        }
     }
 
     double fl = f(low);
@@ -142,7 +348,15 @@ double branching_factor(const vector<int> &a, double tol)
                     break;
             }
             if (!(fl > 0.0 && fh < 0.0))
-                throw runtime_error("Failed to bracket root (fl, fh) = (" + to_string(fl) + ", " + to_string(fh) + ")");
+            {
+                string v_str = "( ";
+                for (int n : a)
+                {
+                    v_str += (to_string(n) + " ");
+                }
+                v_str += ")";
+                throw runtime_error("Failed to bracket root (fl, fh) = (" + to_string(fl) + ", " + to_string(fh) + ") " + v_str);
+            }
         }
     }
 

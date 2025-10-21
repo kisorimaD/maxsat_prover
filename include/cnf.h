@@ -47,7 +47,7 @@ public:
             lits.insert(lit);
     }
     Clause(const set<Literal *, LiteralPtrLess> &lits) : lits(lits), empty(lits.size() == 1 && *lits.begin() == &UNKNOWN_LITERAL) {}
-    Clause(Clause &c) : lits(c.lits), empty(c.empty) {}
+    Clause(const Clause &c) : lits(c.lits), empty(c.empty) {}
 
     set<Literal *, LiteralPtrLess> lits;
     bool empty;
@@ -76,6 +76,8 @@ public:
 
     vector<int> branch(vector<int> ids);
 
+    vector<int> branch_group(vector <int> ids);
+
     vector<Clause *> clauses;
 
 private:
@@ -99,6 +101,7 @@ enum LitType
 
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type);
 
+bool is_A_subset_of_B(int A, int B);
 double branching_factor(const vector<int> &a, double tol = 1e-12);
 
 void print_clause(Clause &c);
