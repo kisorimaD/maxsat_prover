@@ -4,6 +4,7 @@
 #include <set>
 #include <assert.h>
 #include <math.h>
+#include <string>
 
 using namespace std;
 
@@ -54,7 +55,7 @@ bool is_A_subset_of_B(int A, int B)
     return A_without_B == 0;
 }
 
-void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask, vector<int> &reduced_clauses)
+void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask, vector<int> &reduced_clauses, vector<int> &no_clauses_mask)
 {
 
     int k = ids.size();
@@ -69,6 +70,7 @@ void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask, v
         int reduced = 0;
 
         int tc_mask = 0;
+        int no_mask = 0;
 
         // for (Clause *c : clauses)
         for (int clause_ind = 0; clause_ind < (int)cnf.clauses.size(); ++clause_ind)
@@ -96,12 +98,22 @@ void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask, v
 
             if (find_1 || !find_another_literal)
             {
-                tc_mask ^= (1 << clause_ind);
                 reduced++;
+            }
+
+            if (find_1)
+            {
+                tc_mask ^= (1 << clause_ind);
+            }
+
+            if (!find_1 && !find_another_literal)
+            {
+                no_mask ^= (1 << clause_ind);
             }
         }
 
         clauses_mask[mask] = tc_mask;
+        no_clauses_mask[mask] = no_mask;
         reduced_clauses[mask] = reduced;
     }
 }
@@ -115,8 +127,9 @@ vector<int> CNF::branch(vector<int> ids)
 
     vector<int> clauses_mask(1 << k);
     vector<int> reduced_clauses(1 << k);
+    vector<int> no_clauses_mask(1 << k);
 
-    calculate_variants(*this, ids, clauses_mask, reduced_clauses);
+    calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
 
     for (int mask = 0; mask < (1 << k); ++mask)
     {
@@ -129,17 +142,13 @@ vector<int> CNF::branch(vector<int> ids)
 
             if (clauses_mask[mask] == clauses_mask[other_mask])
             {
-                if (other_mask < mask)
-                {
-                    is_subset = true;
-                }
-                else
+                if (other_mask >= mask)
                 {
                     continue;
                 }
             }
 
-            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
+            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]) && no_clauses_mask[mask] == no_clauses_mask[other_mask])
             {
                 is_subset = true;
                 break;
@@ -178,7 +187,7 @@ bool get_next_product(vector<int> &cs)
 int count_set_bits(int n)
 {
     int cnt = 0;
-    while(n)
+    while (n)
     {
         n &= (n - 1);
         cnt++;
@@ -195,10 +204,12 @@ vector<int> CNF::branch_group(vector<int> ids)
     // set <int> true_clauses_masks;
     vector<int> clauses_mask(1 << k);
     vector<int> reduced_clauses(1 << k);
+    vector<int> no_clauses_mask(1 << k);
 
-    calculate_variants(*this, ids, clauses_mask, reduced_clauses);
+    calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
 
     vector<int> rclauses;
+    vector<int> no_clauses;
 
     for (int mask = 0; mask < (1 << k); ++mask)
     {
@@ -211,17 +222,13 @@ vector<int> CNF::branch_group(vector<int> ids)
 
             if (clauses_mask[mask] == clauses_mask[other_mask])
             {
-                if (other_mask < mask)
-                {
-                    is_subset = true;
-                }
-                else
+                if (other_mask >= mask)
                 {
                     continue;
                 }
             }
 
-            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
+            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]) && no_clauses_mask[mask] == no_clauses_mask[other_mask])
             {
                 is_subset = true;
                 break;
@@ -231,6 +238,7 @@ vector<int> CNF::branch_group(vector<int> ids)
         if (!is_subset)
         {
             rclauses.push_back(clauses_mask[mask]);
+            no_clauses.push_back(no_clauses_mask[mask]);
         }
     }
 
@@ -241,7 +249,7 @@ vector<int> CNF::branch_group(vector<int> ids)
 
     vector<int> cs(rcnt, 0);
 
-    vector <int> now_branch;
+    vector<int> now_branch;
 
     do
     {
@@ -249,18 +257,27 @@ vector<int> CNF::branch_group(vector<int> ids)
 
         now_branch.clear();
 
-        for(int c = 0; c < rcnt; ++c)
+        for (int c = 0; c < rcnt; ++c)
         {
             bool has_class = false;
+
             int gclauses = 0;
-            for(int i = 0; i < rcnt; ++i)
+            int gnoclauses = 0;
+
+            for (int i = 0; i < rcnt; ++i)
             {
-                if(cs[i] == c)
+                if (cs[i] == c)
                 {
                     if (!has_class)
+                    {
                         gclauses = rclauses[i];
+                        gnoclauses = no_clauses[i];
+                    }
                     else
+                    {
                         gclauses &= rclauses[i];
+                        gnoclauses &= no_clauses[i];
+                    }
 
                     has_class = true;
                 }
@@ -268,12 +285,12 @@ vector<int> CNF::branch_group(vector<int> ids)
 
             if (has_class)
             {
-                if (gclauses == 0)
+                if (gclauses == 0 && gnoclauses == 0)
                 {
                     got_zero = true;
                     break;
                 }
-                now_branch.push_back(count_set_bits(gclauses));
+                now_branch.push_back(count_set_bits(gclauses) + count_set_bits(gnoclauses));
             }
         }
 
@@ -305,11 +322,11 @@ double f_value(double x, const vector<int> &a)
     return (double)(s - 1.0L);
 }
 
-map <vector <int>, double> branching_factor_cache;
+map<vector<int>, double> branching_factor_cache;
 
 double branching_factor(const vector<int> &a, double tol)
 {
-    vector <int> b = a;
+    vector<int> b = a;
     sort(b.begin(), b.end());
 
     if (branching_factor_cache.count(b) != 0)
@@ -329,13 +346,14 @@ double branching_factor(const vector<int> &a, double tol)
         if (fv < 0.0)
             break;
         high *= 1.5;
-        if (high > 1e8){
+        if (high > 1e8)
+        {
             string v_str = "( ";
-                for (int n : a)
-                {
-                    v_str += (to_string(n) + " ");
-                }
-                v_str += ")";
+            for (int n : a)
+            {
+                v_str += (to_string(n) + " ");
+            }
+            v_str += ")";
             throw runtime_error("Cannot bracket root: high grew too large. Branch: " + v_str);
         }
     }
@@ -432,12 +450,87 @@ void preprocess()
     VAR2ID["?"] = 0;
 }
 
+string join(vector<string> a, string del)
+{
+    string ans;
+    for (int i = 0; i < a.size(); ++i)
+    {
+        ans += a[i];
+        if (i < a.size() - 1)
+            ans += del;
+    }
+    return ans;
+}
+
+string cnf_to_string(CNF *cnf)
+{
+    vector<string> clauses_str;
+    for (auto clause : cnf->clauses)
+    {
+        vector<string> lits_str;
+        for (auto lit : clause->lits)
+        {
+            lits_str.push_back((lit->inv ? "~" : "=") + to_string(lit->id));
+        }
+        sort(lits_str.begin(), lits_str.end());
+        string clause_str = "(" + join(lits_str, "∨") + ")";
+        clauses_str.push_back(clause_str);
+    }
+    sort(clauses_str.begin(), clauses_str.end());
+    return join(clauses_str, "∧");
+}
+
+string cnf_to_max_string(CNF *cnf)
+{
+    vector<int> perm(ID_COUNTER - 1);
+    for (int i = 0; i < perm.size(); ++i)
+    {
+        perm[i] = i + 1;
+    }
+
+    string max_str;
+
+    vector<string> clauses_str;
+
+    do
+    {
+        clauses_str.clear();
+        for (auto clause : cnf->clauses)
+        {
+            vector<string> lits_str;
+            for (auto lit : clause->lits)
+            {
+                lits_str.push_back((lit->inv ? "~" : "=") + to_string(lit->id == 0 ? 0 : perm[lit->id - 1]));
+            }
+            sort(lits_str.begin(), lits_str.end());
+            string clause_str = "(" + join(lits_str, "∨") + ")";
+            clauses_str.push_back(clause_str);
+        }
+        sort(clauses_str.begin(), clauses_str.end());
+        string now_str = join(clauses_str, "∧");
+
+        if (now_str > max_str)
+        {
+            max_str = now_str;
+        }
+
+    } while (next_permutation(perm.begin(), perm.end()));
+
+    // cout << "---------\n";
+    // print_cnf(*cnf);
+    // cout << max_str << endl;
+
+    return max_str;
+}
+
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 {
     // a + b = s
     // В 0 <= a <= i клозах литерал встречается с x
     // В 0 <= b <= j клозах он встречается с ~x
     // Остальное в новых клозах
+
+    set<string> used;
 
     vector<CNF *> ans;
 
@@ -473,7 +566,7 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 
                     for (int k = 0; k < cnf_size; ++k)
                     {
-                        if (m[k])
+                        if (m[k] && now_cnf->clauses[k]->lits.find(&UNKNOWN_LITERAL) != now_cnf->clauses[k]->lits.end())
                         {
                             if (xm[xm_ind++])
                             {
@@ -484,11 +577,17 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
                                 now_cnf->clauses[k]->lits.insert(new_lit_neg);
                             }
                         }
+
+                        if (k == 0 && !m[k])
+                        {
+                            now_cnf->clauses[0]->lits.erase(&UNKNOWN_LITERAL);
+                        }
                     }
 
                     for (int k = 0; k < (i - a); ++k) // Добиваем остатки в новых клозах
                     {
                         vector<Literal *> new_clause_list = {new_lit, &UNKNOWN_LITERAL};
+
                         Clause *new_clause_x = new Clause(new_clause_list);
                         now_cnf->clauses.push_back(new_clause_x);
                     }
@@ -509,7 +608,15 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
                         }
                     }
 
-                    ans.push_back(now_cnf);
+                    string now_cnf_str = cnf_to_max_string(now_cnf);
+
+                    if (used.find(now_cnf_str) == used.end())
+                    {
+                        ans.push_back(now_cnf);
+                        used.insert(now_cnf_str);
+                    }
+
+                    // ans.push_back(now_cnf);
 
                 } while (prev_permutation(xm.begin(), xm.end()));
             }

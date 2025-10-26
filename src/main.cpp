@@ -1,5 +1,6 @@
 #include "cnf.h"
 #include "test.h"
+#include "solver.h"
 #include <iostream>
 #include <functional>
 
@@ -18,6 +19,10 @@ void print_help()
     cout << "factor\tTests factor branch computing\n";
     cout << "subset\tInteractive test for subset func\n";
     cout << "group\tTest for new group branching\n";
+    cout << "addvar\tTest add_new_var func\n";
+    cout << "nounknown\tTest no unknown literals\n";
+    cout << "test\tInteractive test for branching etc.\n";
+    cout << "start\tStart proof algorithm\n";
 }
 
 void fill_test_names()
@@ -28,6 +33,11 @@ void fill_test_names()
     test_names["factor"] = test_branching_factor;
     test_names["subset"] = test_subset_func;
     test_names["group"] = test_branch_group;
+    test_names["start"] = solve;
+    test_names["addvar"] = test_add_new_var;
+    test_names["nounknown"] = test_no_unknown_literal;
+    test_names["test"] = test_universal;
+
     test_names["help"] = print_help;
     test_names["--help"] = print_help;
 }
