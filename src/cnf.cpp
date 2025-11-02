@@ -148,7 +148,7 @@ vector<int> CNF::branch(vector<int> ids)
                 }
             }
 
-            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]) && no_clauses_mask[mask] == no_clauses_mask[other_mask])
+            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
             {
                 is_subset = true;
                 break;
@@ -228,7 +228,7 @@ vector<int> CNF::branch_group(vector<int> ids)
                 }
             }
 
-            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]) && no_clauses_mask[mask] == no_clauses_mask[other_mask])
+            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
             {
                 is_subset = true;
                 break;
@@ -253,7 +253,7 @@ vector<int> CNF::branch_group(vector<int> ids)
 
     do
     {
-        bool got_zero = false;
+        bool got_zero = false; 
 
         now_branch.clear();
 
@@ -263,6 +263,8 @@ vector<int> CNF::branch_group(vector<int> ids)
 
             int gclauses = 0;
             int gnoclauses = 0;
+
+            vector<int> clause_used(rclauses.size(), -1);
 
             for (int i = 0; i < rcnt; ++i)
             {
@@ -279,9 +281,41 @@ vector<int> CNF::branch_group(vector<int> ids)
                         gnoclauses &= no_clauses[i];
                     }
 
+                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                    {
+                        if ((rclauses[i] >> cl) & 1)
+                        {
+                            if (clause_used[i] == -1)
+                            {
+                                clause_used[i] = i;
+                            }
+                            else
+                            {
+                                clause_used[i] = -2;
+                            }
+                        }
+
+                        if ((no_clauses[i] >> cl) & 1)
+                        {
+                            clause_used[i] = -2;
+                        }
+                    }
+
                     has_class = true;
                 }
             }
+
+            set<int> used_lits;
+
+            for (int i = 0; i < (int)clause_used.size(); ++i)
+            {
+                if (clause_used[i] >= 0)
+                {
+                    used_lits.insert(clause_used[i]);
+                }
+            }
+
+            int abc_reduced = max((int)used_lits.size() - 1, 0);
 
             if (has_class)
             {
@@ -290,7 +324,7 @@ vector<int> CNF::branch_group(vector<int> ids)
                     got_zero = true;
                     break;
                 }
-                now_branch.push_back(count_set_bits(gclauses) + count_set_bits(gnoclauses));
+                now_branch.push_back(count_set_bits(gclauses) + count_set_bits(gnoclauses) - abc_reduced);
             }
         }
 
@@ -427,7 +461,7 @@ void print_clause(Clause &c)
         cout << ID2VAR[lit->id];
 
         if (i != n - 1)
-            cout << " ∧ ";
+            cout << " ∨ ";
 
         i++;
     }
@@ -444,19 +478,21 @@ void print_cnf(CNF &cnf)
     cout << endl;
 }
 
-void preprocess()
+void preprocess(int maximum_clause_size)
 {
     ID2VAR[0] = "?";
     VAR2ID["?"] = 0;
+
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
 }
 
 string join(vector<string> a, string del)
 {
     string ans;
-    for (int i = 0; i < a.size(); ++i)
+    for (int i = 0; i < (int)a.size(); ++i)
     {
         ans += a[i];
-        if (i < a.size() - 1)
+        if (i < (int)a.size() - 1)
             ans += del;
     }
     return ans;
@@ -483,7 +519,7 @@ string cnf_to_string(CNF *cnf)
 string cnf_to_max_string(CNF *cnf)
 {
     vector<int> perm(ID_COUNTER - 1);
-    for (int i = 0; i < perm.size(); ++i)
+    for (int i = 0; i < (int)perm.size(); ++i)
     {
         perm[i] = i + 1;
     }
@@ -521,6 +557,54 @@ string cnf_to_max_string(CNF *cnf)
     // cout << max_str << endl;
 
     return max_str;
+}
+
+int F(CNF *cnf, int id_x, int id_y)
+{
+    int ans = 0;
+
+    bool found_x_for_once = false;
+    bool found_y_for_once = false;
+
+    for (Clause *cl : cnf->clauses)
+    {
+        bool find_x = false;
+        bool x_inv = false;
+        bool find_y = false;
+        bool y_inv = false;
+        for (Literal *l : cl->lits)
+        {
+            if (l->id == id_x)
+            {
+                find_x = true;
+                x_inv = l->inv;
+
+                found_x_for_once = true;
+
+                if (find_y)
+                    break;
+            }
+
+            if (l->id == id_y)
+            {
+                find_y = true;
+                y_inv = l->inv;
+
+                found_y_for_once = true;
+
+                if (find_x)
+                    break;
+            }
+        }
+
+        if (find_x != find_y)
+        {
+            ans++;
+        }
+    }
+    if (!found_x_for_once || !found_y_for_once)
+        return -1;
+    return ans;
 }
 
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
@@ -566,15 +650,23 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 
                     for (int k = 0; k < cnf_size; ++k)
                     {
-                        if (m[k] && now_cnf->clauses[k]->lits.find(&UNKNOWN_LITERAL) != now_cnf->clauses[k]->lits.end())
+                        if (m[k])
                         {
-                            if (xm[xm_ind++])
+                            if (now_cnf->clauses[k]->lits.find(&UNKNOWN_LITERAL) != now_cnf->clauses[k]->lits.end())
                             {
-                                now_cnf->clauses[k]->lits.insert(new_lit);
+                                if (xm[xm_ind++])
+                                {
+                                    now_cnf->clauses[k]->lits.insert(new_lit);
+                                }
+                                else
+                                {
+                                    now_cnf->clauses[k]->lits.insert(new_lit_neg);
+                                }
                             }
                             else
                             {
-                                now_cnf->clauses[k]->lits.insert(new_lit_neg);
+                                xm_ind++;
+                                continue;
                             }
                         }
 
@@ -605,6 +697,31 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
                             vector<Literal *> new_clause_list = {new_lit_neg, &UNKNOWN_LITERAL};
                             Clause *new_clause_x = new Clause(new_clause_list);
                             now_cnf->clauses.push_back(new_clause_x);
+                        }
+                    }
+
+                    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE != -1)
+                    {
+                        bool too_many_lits = false;
+
+                        for (Clause *c : now_cnf->clauses)
+                        {
+                            if (c->lits.size() > MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 || (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 && c->lits.find(&UNKNOWN_LITERAL) == c->lits.end()))
+                            {
+                                too_many_lits = true;
+                                break;
+                            }
+                        }
+
+                        if (too_many_lits)
+                            continue;
+
+                        for (Clause *c : now_cnf->clauses)
+                        {
+                            if (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1)
+                            {
+                                c->lits.erase(&UNKNOWN_LITERAL);
+                            }
                         }
                     }
 

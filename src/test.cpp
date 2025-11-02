@@ -94,7 +94,7 @@ void test_branch_three_vars()
     Literal y = Literal("y");
     Literal z = Literal("z");
 
-    for (int i = 0; i < with_z.size(); ++i)
+    for (int i = 0; i < (int)with_z.size(); ++i)
     {
         cout << "Выполняется " << i << "/" << with_z.size() << "                \r";
 
@@ -153,7 +153,7 @@ void test_branch_two_vars()
     Literal x = Literal("x");
     Literal y = Literal("y");
 
-    for (int i = 0; i < with_y.size(); ++i)
+    for (int i = 0; i < (int)with_y.size(); ++i)
     {
         cout << "Выполняется " << i << "/" << with_y.size() << "                \r";
 
@@ -320,7 +320,7 @@ void pretty_branch_print(vector<string> &vars, CNF *cnf)
         cout << vars[i] << '\t';
     }
 
-    for (int i = 0; i < cnf->clauses.size(); ++i)
+    for (int i = 0; i < (int)cnf->clauses.size(); ++i)
     {
         cout << i + 1;
         cout << '\t';
@@ -335,7 +335,7 @@ void pretty_branch_print(vector<string> &vars, CNF *cnf)
             cout << ((mask >> i) & 1) << '\t';
         }
 
-        for (int i = 0; i < cnf->clauses.size(); ++i)
+        for (int i = 0; i < (int)cnf->clauses.size(); ++i)
         {
             bool find_another_literal = false;
             bool find_true = false;
@@ -430,7 +430,7 @@ void printProgress_test(double percentage)
     std::cout << "\r" << val << "% [" << std::string(lpad, '#') << std::string(rpad, '-') << "]" << std::flush;
 }
 
-void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C)
+void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C, bool is_group_branch)
 {
     cout << "Начинается примитивная фильтрация\n";
     vector<CNF *> filtered_variants;
@@ -447,6 +447,12 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C)
     }
 
     cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
+
+    if(!is_group_branch)
+    {
+        swap(filtered_variants, variants);
+        return;
+    }
 
     cout << "Осталось [" << filtered_variants.size() << "]. Начинается фильтрация с группировкой\n";
 
@@ -478,7 +484,7 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C)
         if (need_pb)
             progress_counter_test++;
 
-        if (need_pb && progress_counter_test % 50 == 0)
+        if (need_pb && progress_counter_test % 5 == 0)
         {
             printProgress_test((double)progress_counter_test / vsize);
         }
@@ -498,6 +504,7 @@ void print_help_universal()
     cout << "   add [var_name] [i] [j] [SINGLETON | ANY]\t\tДобавить переменную (i, j), если SINGLETON, то синглтон\n";
     cout << "   set [branching factor]                  \t\tУстановить порог С (по умолчанию равен 1.28854 или [6 6 5 5])\n";
     cout << "   branch                                  \t\tОбычное отсеивание + с группировкой бренчингом всех вариантов ниже С\n";
+    cout << "   simple_branch                           \t\tОбычное отсеивание без группировки бренчингом всех вариантов ниже С\n";
     cout << "   target [i]                              \t\tОставить в рассмотрении только [i] вариант\n";
     cout << "   head [n]                                \t\tВывести [n] первых вариантов сейчас\n";
     cout << "   print [i]                               \t\tВывести [i] вариант и разобрать по переменным\n";
@@ -575,9 +582,18 @@ void test_universal()
             continue;
         }
 
+
+        if(command == "simple_branch")
+        {
+            branch_epoch_universal(cur, ids, C, false);
+            cout << endl;
+            continue;
+        }
+
+
         if(command == "branch")
         {
-            branch_epoch_universal(cur, ids, C);
+            branch_epoch_universal(cur, ids, C, true);
             cout << endl;
             continue;
         }

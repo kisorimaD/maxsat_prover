@@ -11,7 +11,11 @@ extern map<int, string> ID2VAR;
 extern map<string, int> VAR2ID;
 extern int ID_COUNTER;
 
-void preprocess();
+struct{
+    int MAXIMUM_CLAUSE_SIZE;
+} MaxSATSettings;
+
+void preprocess(int maximum_clause_size = -1);
 
 class Literal
 {
@@ -76,9 +80,10 @@ public:
 
     vector<int> branch(vector<int> ids);
 
-    vector<int> branch_group(vector <int> ids);
+    vector<int> branch_group(vector<int> ids);
 
     vector<Clause *> clauses;
+
 
 private:
     void RRule1();
