@@ -253,7 +253,7 @@ vector<int> CNF::branch_group(vector<int> ids)
 
     do
     {
-        bool got_zero = false; 
+        bool got_zero = false;
 
         now_branch.clear();
 
@@ -647,6 +647,7 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
                     int xm_ind = 0;
 
                     CNF *now_cnf = new CNF(*cnf);
+                    now_cnf->min_F = cnf->min_F;
 
                     for (int k = 0; k < cnf_size; ++k)
                     {
@@ -670,10 +671,10 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
                             }
                         }
 
-                        if (k == 0 && !m[k])
-                        {
-                            now_cnf->clauses[0]->lits.erase(&UNKNOWN_LITERAL);
-                        }
+                        // if (k == 0 && !m[k] && cnf->min_F != -1)
+                        // {
+                        //     now_cnf->clauses[0]->lits.erase(&UNKNOWN_LITERAL);
+                        // }
                     }
 
                     for (int k = 0; k < (i - a); ++k) // Добиваем остатки в новых клозах
@@ -729,6 +730,49 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 
                     if (used.find(now_cnf_str) == used.end())
                     {
+
+                        bool has_less_F = false;
+
+                        if (cnf->clauses.size() != 0 && cnf->min_F == -1)
+                        {
+                            int x_id = -1;
+
+                            for (auto nameid : VAR2ID)
+                            {
+                                int id = nameid.second;
+                                if (id == 0 || id == new_lit->id)
+                                    continue;
+
+                                x_id = id;
+                                break;
+                            }
+
+                            now_cnf->min_F = F(now_cnf, x_id, new_lit->id);
+                        }
+                        else
+                        {
+                            for (auto nameid : VAR2ID)
+                            {
+                                int id = nameid.second;
+
+                                if (new_lit->id == id || id == 0)
+                                    continue;
+
+                                int curF = F(now_cnf, new_lit->id, id);
+
+                                if (curF == -1)
+                                    continue;
+
+                                if (curF < cnf->min_F)
+                                {
+                                    has_less_F = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (has_less_F)
+                            continue;
+
                         ans.push_back(now_cnf);
                         used.insert(now_cnf_str);
                     }

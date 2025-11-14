@@ -84,6 +84,7 @@ public:
 
     vector<Clause *> clauses;
 
+    int min_F = -1;
 
 private:
     void RRule1();
