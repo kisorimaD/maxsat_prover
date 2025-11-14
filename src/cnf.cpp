@@ -6,6 +6,8 @@
 #include <math.h>
 #include <string>
 
+// #include <fstream>
+
 using namespace std;
 
 map<int, string> ID2VAR;
@@ -184,6 +186,32 @@ bool get_next_product(vector<int> &cs)
     return false;
 }
 
+bool get_next_partition(std::vector<int> &c)
+{
+    int i = c.size() - 1;
+
+    while (i >= 0)
+    {
+        int mx = -1;
+        for (int j = 0; j < i; j++)
+            if (c[j] > mx)
+                mx = c[j];
+
+        int limit = mx + 1;
+
+        if (c[i] < limit)
+        {
+            c[i]++;
+            return true;
+        }
+
+        c[i] = 0;
+        i--;
+    }
+
+    return false;
+}
+
 int count_set_bits(int n)
 {
     int cnt = 0;
@@ -248,6 +276,8 @@ vector<int> CNF::branch_group(vector<int> ids)
     vector<int> mn_branch;
 
     vector<int> cs(rcnt, 0);
+
+    vector<int> mn_partition(rcnt, -1);
 
     vector<int> now_branch;
 
@@ -339,9 +369,36 @@ vector<int> CNF::branch_group(vector<int> ids)
         {
             mn_factor = now_factor;
             mn_branch = now_branch;
+            mn_partition = cs;
         }
 
-    } while (get_next_product(cs));
+        // } while (get_next_product(cs));
+    } while (get_next_partition(cs));
+
+    // ofstream opf;
+    // opf.open("partitions.txt", ios::app);
+
+    // if(opf.is_open())
+    // {
+    //     map<int, int> c_ids;
+    //     int new_id = 0;
+
+    //     for(int i = 0; i < mn_partition.size(); ++i)
+    //     {
+    //         if(c_ids.count(mn_partition[i]) == 0)
+    //         {
+    //             c_ids[mn_partition[i]] = new_id++;
+    //         }
+
+    //         opf << c_ids[mn_partition[i]] << " ";
+    //     }
+
+    //     opf << " | " << mn_factor << endl;
+    // }
+    // else
+    // {
+    //     cout << "UNABLE TO OPEN FILE\n";
+    // }
 
     return mn_branch;
 }
@@ -559,54 +616,6 @@ string cnf_to_max_string(CNF *cnf)
     return max_str;
 }
 
-int F(CNF *cnf, int id_x, int id_y)
-{
-    int ans = 0;
-
-    bool found_x_for_once = false;
-    bool found_y_for_once = false;
-
-    for (Clause *cl : cnf->clauses)
-    {
-        bool find_x = false;
-        bool x_inv = false;
-        bool find_y = false;
-        bool y_inv = false;
-        for (Literal *l : cl->lits)
-        {
-            if (l->id == id_x)
-            {
-                find_x = true;
-                x_inv = l->inv;
-
-                found_x_for_once = true;
-
-                if (find_y)
-                    break;
-            }
-
-            if (l->id == id_y)
-            {
-                find_y = true;
-                y_inv = l->inv;
-
-                found_y_for_once = true;
-
-                if (find_x)
-                    break;
-            }
-        }
-
-        if (find_x != find_y)
-        {
-            ans++;
-        }
-    }
-    if (!found_x_for_once || !found_y_for_once)
-        return -1;
-    return ans;
-}
-
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 {
     // a + b = s
@@ -647,7 +656,6 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
                     int xm_ind = 0;
 
                     CNF *now_cnf = new CNF(*cnf);
-                    now_cnf->min_F = cnf->min_F;
 
                     for (int k = 0; k < cnf_size; ++k)
                     {
@@ -671,10 +679,10 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
                             }
                         }
 
-                        // if (k == 0 && !m[k] && cnf->min_F != -1)
-                        // {
-                        //     now_cnf->clauses[0]->lits.erase(&UNKNOWN_LITERAL);
-                        // }
+                        if (k == 0 && !m[k])
+                        {
+                            now_cnf->clauses[0]->lits.erase(&UNKNOWN_LITERAL);
+                        }
                     }
 
                     for (int k = 0; k < (i - a); ++k) // Добиваем остатки в новых клозах
@@ -730,49 +738,6 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 
                     if (used.find(now_cnf_str) == used.end())
                     {
-
-                        bool has_less_F = false;
-
-                        if (cnf->clauses.size() != 0 && cnf->min_F == -1)
-                        {
-                            int x_id = -1;
-
-                            for (auto nameid : VAR2ID)
-                            {
-                                int id = nameid.second;
-                                if (id == 0 || id == new_lit->id)
-                                    continue;
-
-                                x_id = id;
-                                break;
-                            }
-
-                            now_cnf->min_F = F(now_cnf, x_id, new_lit->id);
-                        }
-                        else
-                        {
-                            for (auto nameid : VAR2ID)
-                            {
-                                int id = nameid.second;
-
-                                if (new_lit->id == id || id == 0)
-                                    continue;
-
-                                int curF = F(now_cnf, new_lit->id, id);
-
-                                if (curF == -1)
-                                    continue;
-
-                                if (curF < cnf->min_F)
-                                {
-                                    has_less_F = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (has_less_F)
-                            continue;
-
                         ans.push_back(now_cnf);
                         used.insert(now_cnf_str);
                     }

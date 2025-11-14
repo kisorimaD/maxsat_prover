@@ -83,19 +83,6 @@ public:
     vector<int> branch_group(vector<int> ids);
 
     vector<Clause *> clauses;
-
-    int min_F = -1;
-
-private:
-    void RRule1();
-    // void RRule2();
-    // void RRule3();
-    // void RRule4();
-    // void RRule5();
-    // void RRule6();
-    // void RRule7();
-    // void RRule8();
-    // void RRule9();
 };
 
 enum LitType

@@ -315,8 +315,6 @@ void pretty_branch_print(vector<string> &vars, CNF *cnf)
 
     print_cnf(*cnf);
 
-    cout << "min F: " << cnf->min_F << endl;
-
     for (int i = 0; i < k; ++i)
     {
         cout << vars[i] << '\t';
