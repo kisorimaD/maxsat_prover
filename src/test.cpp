@@ -395,11 +395,10 @@ void test_no_unknown_literal()
 
     vector<string> vars = {"x", "y"};
 
-    
     Literal x = Literal("x");
     Literal y = Literal("y");
 
-    while(k != -1)
+    while (k != -1)
     {
         pretty_branch_print(vars, with_y.at(k));
 
@@ -419,7 +418,6 @@ void test_no_unknown_literal()
         cin >> k;
     }
 }
-
 
 void printProgress_test(double percentage)
 {
@@ -448,7 +446,7 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
 
     cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
 
-    if(!is_group_branch)
+    if (!is_group_branch)
     {
         swap(filtered_variants, variants);
         return;
@@ -470,15 +468,22 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         progress_counter_test = 0;
 
     int vsize = variants.size();
-    
+
     for (CNF *cnf : variants)
     {
-        vector<int> group_branch = cnf->branch_group(ids);
-        double bf = branching_factor(group_branch);
+        // try k = ids.size()
+        vector<int> approx_group_branch = cnf->branch_group(ids, ids.size());
+        double small_try_bf = branching_factor(approx_group_branch);
 
-        if (bf >= C)
+        if (small_try_bf >= C)
         {
-            filtered_variants.push_back(cnf);
+            vector<int> group_branch = cnf->branch_group(ids, -1);
+            double bf = branching_factor(group_branch);
+
+            if (bf >= C)
+            {
+                filtered_variants.push_back(cnf);
+            }
         }
 
         if (need_pb)
@@ -496,7 +501,6 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
 
     swap(variants, filtered_variants);
 }
-
 
 void print_help_universal()
 {
@@ -519,23 +523,23 @@ void test_universal()
 
     CNF cnf;
 
-    vector <CNF *> cur = {&cnf};
+    vector<CNF *> cur = {&cnf};
 
-    vector <int> ids;
-    vector <string> vars;
+    vector<int> ids;
+    vector<string> vars;
 
     string command;
 
     print_help_universal();
-    
+
     double C = 1.28855;
 
-    while(command != "exit")
+    while (command != "exit")
     {
         cout << "Введите команду: ";
         cin >> command;
 
-        if(command == "add")
+        if (command == "add")
         {
             string var_name;
             int i, j;
@@ -545,7 +549,7 @@ void test_universal()
 
             LitType new_type = type == "SINGLETON" ? SINGLETON : ANY;
 
-            if(VAR2ID.count(var_name) != 0)
+            if (VAR2ID.count(var_name) != 0)
             {
                 cout << "Это имя переменной уже занято. Попробуйте другое название переменной\n";
                 continue;
@@ -555,10 +559,10 @@ void test_universal()
             ids.push_back(new_lit.id);
             vars.push_back(var_name);
 
-            cout << "Добавляем переменную " << var_name << " вида (" << i << ", " << j << ")" << (new_type == SINGLETON ? "-singleton" : "") << endl; 
+            cout << "Добавляем переменную " << var_name << " вида (" << i << ", " << j << ")" << (new_type == SINGLETON ? "-singleton" : "") << endl;
 
             vector<CNF *> new_lit_variants;
-            
+
             for (CNF *cnf : cur)
             {
                 auto new_vars = add_new_var(cnf, var_name, i, j, new_type);
@@ -573,7 +577,7 @@ void test_universal()
             continue;
         }
 
-        if(command == "set")
+        if (command == "set")
         {
             cin >> C;
 
@@ -582,28 +586,26 @@ void test_universal()
             continue;
         }
 
-
-        if(command == "simple_branch")
+        if (command == "simple_branch")
         {
             branch_epoch_universal(cur, ids, C, false);
             cout << endl;
             continue;
         }
 
-
-        if(command == "branch")
+        if (command == "branch")
         {
             branch_epoch_universal(cur, ids, C, true);
             cout << endl;
             continue;
         }
 
-        if(command == "head")
+        if (command == "head")
         {
             int n;
             cin >> n;
 
-            for(int i = 0; i < min((int)cur.size(), n); ++i)
+            for (int i = 0; i < min((int)cur.size(), n); ++i)
             {
                 print_cnf(*cur[i]);
                 cout << endl;
@@ -612,7 +614,7 @@ void test_universal()
             continue;
         }
 
-        if(command == "print")
+        if (command == "print")
         {
             int i;
             cin >> i;
@@ -639,12 +641,12 @@ void test_universal()
             continue;
         }
 
-        if(command == "factor")
+        if (command == "factor")
         {
             std::string l;
             getline(cin, l);
             getline(cin, l);
-            
+
             stringstream ss(l);
             string token;
 
@@ -656,7 +658,7 @@ void test_universal()
             }
             cout << endl;
 
-            cout <<  branching_factor(C_branch) << endl;
+            cout << branching_factor(C_branch) << endl;
 
             continue;
         }
@@ -671,13 +673,13 @@ void test_universal()
             continue;
         }
 
-        if(command == "help")
+        if (command == "help")
         {
             print_help_universal();
             continue;
         }
 
-        if(command == "exit")
+        if (command == "exit")
         {
             break;
         }

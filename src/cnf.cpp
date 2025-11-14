@@ -186,7 +186,7 @@ bool get_next_product(vector<int> &cs)
     return false;
 }
 
-bool get_next_partition(std::vector<int> &c)
+bool get_next_partition(std::vector<int> &c, int k)
 {
     int i = c.size() - 1;
 
@@ -198,6 +198,8 @@ bool get_next_partition(std::vector<int> &c)
                 mx = c[j];
 
         int limit = mx + 1;
+        if(k != -1 && limit > k - 1)
+            limit = k - 1;
 
         if (c[i] < limit)
         {
@@ -223,7 +225,7 @@ int count_set_bits(int n)
     return cnt;
 }
 
-vector<int> CNF::branch_group(vector<int> ids)
+vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 {
     int k = ids.size();
 
@@ -373,7 +375,7 @@ vector<int> CNF::branch_group(vector<int> ids)
         }
 
         // } while (get_next_product(cs));
-    } while (get_next_partition(cs));
+    } while (get_next_partition(cs, max_partitions));
 
     // ofstream opf;
     // opf.open("partitions.txt", ios::app);
@@ -402,6 +404,8 @@ vector<int> CNF::branch_group(vector<int> ids)
 
     return mn_branch;
 }
+
+// vector<int> CNF::
 
 double f_value(double x, const vector<int> &a)
 { // compute sum_i x^{-a_i} - 1

@@ -80,7 +80,7 @@ public:
 
     vector<int> branch(vector<int> ids);
 
-    vector<int> branch_group(vector<int> ids);
+    vector<int> branch_group(vector<int> ids, int max_partitions = -1);
 
     vector<Clause *> clauses;
 };
