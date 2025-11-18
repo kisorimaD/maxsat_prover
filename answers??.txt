@@ -1,0 +1,763 @@
+Список команд:
+   add [var_name] [i] [j] [SINGLETON | ANY]		Добавить переменную (i, j), если SINGLETON, то синглтон
+   addpos [var_name] [need_names] [no_names]		Добавить новую переменную в первую клозу, в которой есть все
+							переменные из need_names и нет ни одной из no_names. Ввод разделяется строчками
+   set [branching factor]                  		Установить порог С (по умолчанию равен 1.28854 или [6 6 5 5])
+   branch                                  		Обычное отсеивание + с группировкой бренчингом всех вариантов ниже С
+   simple_branch                           		Обычное отсеивание без группировки бренчингом всех вариантов ниже С
+   target [i]                              		Оставить в рассмотрении только [i] вариант
+   head [n]                                		Вывести [n] первых вариантов сейчас
+   print [i]                               		Вывести [i] вариант и разобрать по переменным
+   factor [vector]                         		Вывести branching factor для заданного вектора
+   setposfunc [need_names] [no_names]      		Зафиксировать позиционную функцию, которая будет выводиться в print
+   help                                    		Вывести список команд (этот)
+   exit                                    		Выйти из тестирования
+
+Введите команду: add x 3 2 a
+Добавляем переменную x вида (3, 2)
+В текущем рассмотрении [1] вариантов
+
+Введите команду: addpos y
+-x
+NEED_NAMES:	¬x 
+
+NO_NAMES:	
+В текущем рассмотрении [49] вариантов
+
+Введите команду: head 49 
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ¬x )( ? ∨ ¬x )
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )( ? ∨ y )( ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )( ¬y )
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )( ? ∨ y )( ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )( ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ¬y )
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ y )( ? ∨ ¬y )
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ ¬y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )
+
+Введите команду: printall
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ¬x )( ? ∨ ¬x )
+x	y	1	2	3	4	5	
+0	0	?	?	?	YES	YES	
+1	0	YES	YES	YES	NO	?	
+0	1	?	?	?	YES	YES	
+1	1	YES	YES	YES	NO	?	
+
+Group Branch:
+2 4 
+|  1.27202
+
+=================================================
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )( ? ∨ y )( ¬y )
+x	y	1	2	3	4	5	6	7	8	9	
+0	0	?	?	?	YES	YES	?	?	?	YES	
+1	0	YES	YES	YES	?	?	?	?	?	YES	
+0	1	?	?	?	YES	YES	YES	YES	YES	NO	
+1	1	YES	YES	YES	YES	?	YES	YES	YES	NO	
+
+Group Branch:
+2 6 
+|  1.21061
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )( ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	?	?	?	YES	YES	?	?	YES	
+1	0	YES	YES	YES	?	?	?	?	YES	
+0	1	YES	?	?	YES	YES	YES	YES	NO	
+1	1	YES	YES	YES	YES	?	YES	YES	NO	
+
+Group Branch:
+2 6 
+|  1.21061
+
+=================================================
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )( ? ∨ y )( ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	?	?	?	YES	YES	?	?	YES	
+1	0	YES	YES	YES	?	?	?	?	YES	
+0	1	?	?	?	YES	YES	YES	YES	NO	
+1	1	YES	YES	YES	YES	YES	YES	YES	NO	
+
+Group Branch:
+2 8 
+|  1.17485
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	?	?	?	YES	YES	?	YES	
+1	0	YES	YES	YES	?	?	?	YES	
+0	1	YES	YES	?	YES	YES	YES	NO	
+1	1	YES	YES	YES	YES	?	YES	NO	
+
+Group Branch:
+2 6 
+|  1.21061
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )( ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	?	?	?	YES	YES	?	YES	
+1	0	YES	YES	YES	?	?	?	YES	
+0	1	YES	?	?	YES	YES	YES	NO	
+1	1	YES	YES	YES	YES	YES	YES	NO	
+
+Group Branch:
+2 7 
+|  1.19071
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ¬y )
+x	y	1	2	3	4	5	6	
+0	0	?	?	?	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	
+0	1	YES	YES	YES	YES	YES	NO	
+1	1	YES	YES	YES	YES	?	NO	
+
+Group Branch:
+2 6 
+|  1.21061
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ¬y )
+x	y	1	2	3	4	5	6	
+0	0	?	?	?	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	
+0	1	YES	YES	?	YES	YES	NO	
+1	1	YES	YES	YES	YES	YES	NO	
+
+Group Branch:
+2 6 
+|  1.21061
+
+=================================================
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	9	
+0	0	?	?	?	YES	YES	?	YES	YES	YES	
+1	0	YES	YES	YES	?	?	?	YES	YES	YES	
+0	1	?	?	?	YES	YES	YES	?	?	?	
+1	1	YES	YES	YES	YES	?	YES	?	?	?	
+
+Group Branch:
+4 3 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	YES	?	?	YES	YES	?	YES	YES	
+1	0	YES	YES	YES	?	?	?	YES	YES	
+0	1	?	?	?	YES	YES	YES	?	?	
+1	1	YES	YES	YES	YES	?	YES	?	?	
+
+Group Branch:
+3 5 
+|  1.19386
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	?	?	?	YES	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	YES	YES	
+0	1	YES	?	?	YES	YES	?	?	?	
+1	1	YES	YES	YES	YES	?	?	?	?	
+
+Group Branch:
+4 3 
+|  1.22074
+
+=================================================
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	?	?	?	YES	YES	?	YES	YES	
+1	0	YES	YES	YES	?	YES	?	YES	YES	
+0	1	?	?	?	YES	YES	YES	?	?	
+1	1	YES	YES	YES	YES	?	YES	?	?	
+
+Group Branch:
+4 3 
+|  1.22074
+
+=================================================
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	?	?	?	YES	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	YES	YES	
+0	1	?	?	?	YES	YES	?	?	?	
+1	1	YES	YES	YES	YES	YES	?	?	?	
+
+Group Branch:
+4 5 
+|  1.1673
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	YES	YES	?	YES	YES	?	YES	
+1	0	YES	YES	YES	?	?	?	YES	
+0	1	?	?	?	YES	YES	YES	?	
+1	1	YES	YES	YES	YES	?	YES	?	
+
+Group Branch:
+4 3 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	?	YES	?	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	YES	
+0	1	YES	?	?	YES	YES	?	?	
+1	1	YES	YES	YES	YES	?	?	?	
+
+Group Branch:
+3 5 
+|  1.19386
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	YES	?	?	YES	YES	?	YES	
+1	0	YES	YES	YES	?	YES	?	YES	
+0	1	?	?	?	YES	YES	YES	?	
+1	1	YES	YES	YES	YES	?	YES	?	
+
+Group Branch:
+3 5 
+|  1.19386
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	?	?	?	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	YES	YES	YES	
+0	1	YES	?	?	YES	YES	?	?	
+1	1	YES	YES	YES	YES	?	?	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	YES	?	?	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	YES	
+0	1	?	?	?	YES	YES	?	?	
+1	1	YES	YES	YES	YES	YES	?	?	
+
+Group Branch:
+3 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )
+x	y	1	2	3	4	5	6	
+0	0	YES	YES	YES	YES	YES	?	
+1	0	YES	YES	YES	?	?	?	
+0	1	?	?	?	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	
+
+Group Branch:
+3 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	
+0	0	?	YES	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	
+0	1	YES	?	?	YES	YES	?	
+1	1	YES	YES	YES	YES	?	?	
+
+Group Branch:
+4 3 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )
+x	y	1	2	3	4	5	6	
+0	0	YES	YES	?	YES	YES	?	
+1	0	YES	YES	YES	?	YES	?	
+0	1	?	?	?	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	
+
+Group Branch:
+4 3 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	
+0	0	?	YES	?	YES	YES	YES	
+1	0	YES	YES	YES	?	YES	YES	
+0	1	YES	?	?	YES	YES	?	
+1	1	YES	YES	YES	YES	?	?	
+
+Group Branch:
+3 5 
+|  1.19386
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	
+0	0	YES	YES	?	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	
+0	1	?	?	?	YES	YES	?	
+1	1	YES	YES	YES	YES	YES	?	
+
+Group Branch:
+4 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )
+x	y	1	2	3	4	5	6	
+0	0	YES	YES	YES	YES	YES	?	
+1	0	YES	YES	YES	?	YES	?	
+0	1	?	?	?	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	
+
+Group Branch:
+3 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )
+x	y	1	2	3	4	5	
+0	0	?	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	YES	
+0	1	YES	?	?	YES	YES	
+1	1	YES	YES	YES	YES	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )
+x	y	1	2	3	4	5	
+0	0	YES	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	
+0	1	?	?	?	YES	YES	
+1	1	YES	YES	YES	YES	YES	
+
+Group Branch:
+5 
+|  1
+
+=================================================
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	9	
+0	0	?	?	?	YES	YES	?	?	YES	YES	
+1	0	YES	YES	YES	?	?	?	?	YES	YES	
+0	1	?	?	?	YES	YES	YES	YES	?	?	
+1	1	YES	YES	YES	YES	?	YES	YES	?	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	YES	?	?	YES	YES	?	?	YES	
+1	0	YES	YES	YES	?	?	?	?	YES	
+0	1	?	?	?	YES	YES	YES	YES	?	
+1	1	YES	YES	YES	YES	?	YES	YES	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	?	?	?	YES	YES	?	YES	YES	
+1	0	YES	YES	YES	?	?	?	YES	YES	
+0	1	YES	?	?	YES	YES	YES	?	?	
+1	1	YES	YES	YES	YES	?	YES	?	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	?	?	?	YES	YES	?	?	YES	
+1	0	YES	YES	YES	?	YES	?	?	YES	
+0	1	?	?	?	YES	YES	YES	YES	?	
+1	1	YES	YES	YES	YES	?	YES	YES	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	8	
+0	0	?	?	?	YES	YES	?	YES	YES	
+1	0	YES	YES	YES	?	?	?	YES	YES	
+0	1	?	?	?	YES	YES	YES	?	?	
+1	1	YES	YES	YES	YES	YES	YES	?	?	
+
+Group Branch:
+3 6 
+|  1.17398
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )
+x	y	1	2	3	4	5	6	7	
+0	0	YES	YES	?	YES	YES	?	?	
+1	0	YES	YES	YES	?	?	?	?	
+0	1	?	?	?	YES	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	YES	
+
+Group Branch:
+3 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	?	YES	?	YES	YES	?	YES	
+1	0	YES	YES	YES	?	?	?	YES	
+0	1	YES	?	?	YES	YES	YES	?	
+1	1	YES	YES	YES	YES	?	YES	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	?	?	?	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	YES	
+0	1	YES	YES	?	YES	YES	?	?	
+1	1	YES	YES	YES	YES	?	?	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ y )
+x	y	1	2	3	4	5	6	7	
+0	0	YES	?	?	YES	YES	?	?	
+1	0	YES	YES	YES	?	YES	?	?	
+0	1	?	?	?	YES	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	YES	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	?	?	?	YES	YES	?	YES	
+1	0	YES	YES	YES	?	YES	?	YES	
+0	1	YES	?	?	YES	YES	YES	?	
+1	1	YES	YES	YES	YES	?	YES	?	
+
+Group Branch:
+3 5 
+|  1.19386
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	7	
+0	0	?	?	?	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	YES	
+0	1	YES	?	?	YES	YES	?	?	
+1	1	YES	YES	YES	YES	YES	?	?	
+
+Group Branch:
+4 4 
+|  1.18921
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )( ? ∨ y )
+x	y	1	2	3	4	5	6	7	
+0	0	YES	YES	YES	YES	YES	?	?	
+1	0	YES	YES	YES	?	?	?	?	
+0	1	?	?	?	YES	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	YES	
+
+Group Branch:
+3 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ y )
+x	y	1	2	3	4	5	6	
+0	0	?	YES	YES	YES	YES	?	
+1	0	YES	YES	YES	?	?	?	
+0	1	YES	?	?	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	
+
+Group Branch:
+3 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	
+0	0	?	?	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	YES	
+0	1	YES	YES	?	YES	YES	?	
+1	1	YES	YES	YES	YES	?	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ y )
+x	y	1	2	3	4	5	6	7	
+0	0	YES	YES	?	YES	YES	?	?	
+1	0	YES	YES	YES	?	YES	?	?	
+0	1	?	?	?	YES	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	YES	
+
+Group Branch:
+4 4 
+|  1.18921
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )
+x	y	1	2	3	4	5	6	
+0	0	?	YES	?	YES	YES	?	
+1	0	YES	YES	YES	?	YES	?	
+0	1	YES	?	?	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	
+
+Group Branch:
+3 5 
+|  1.19386
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )
+x	y	1	2	3	4	5	6	
+0	0	YES	YES	?	YES	YES	?	
+1	0	YES	YES	YES	?	?	?	
+0	1	?	?	?	YES	YES	YES	
+1	1	YES	YES	YES	YES	YES	YES	
+
+Group Branch:
+6 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ ¬y )
+x	y	1	2	3	4	5	6	
+0	0	?	?	?	YES	YES	YES	
+1	0	YES	YES	YES	?	YES	YES	
+0	1	YES	YES	?	YES	YES	?	
+1	1	YES	YES	YES	YES	?	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )( ? ∨ y )
+x	y	1	2	3	4	5	6	7	
+0	0	YES	YES	YES	YES	YES	?	?	
+1	0	YES	YES	YES	?	YES	?	?	
+0	1	?	?	?	YES	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	YES	
+
+Group Branch:
+3 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )( ? ∨ y )
+x	y	1	2	3	4	5	6	
+0	0	?	YES	YES	YES	YES	?	
+1	0	YES	YES	YES	?	YES	?	
+0	1	YES	?	?	YES	YES	YES	
+1	1	YES	YES	YES	YES	?	YES	
+
+Group Branch:
+4 4 
+|  1.18921
+
+=================================================
+
+( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )( ? ∨ y )
+x	y	1	2	3	4	5	6	
+0	0	YES	YES	YES	YES	YES	?	
+1	0	YES	YES	YES	?	?	?	
+0	1	?	?	?	YES	YES	YES	
+1	1	YES	YES	YES	YES	YES	YES	
+
+Group Branch:
+6 
+|  1
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ ¬y )
+x	y	1	2	3	4	5	
+0	0	?	?	YES	YES	YES	
+1	0	YES	YES	YES	?	YES	
+0	1	YES	YES	?	YES	YES	
+1	1	YES	YES	YES	YES	?	
+
+Group Branch:
+3 4 
+|  1.22074
+
+=================================================
+
+( ? ∨ x ∨ y )( ? ∨ x ∨ ¬y )( ? ∨ x ∨ ¬y )( ? ∨ ¬x ∨ y )( ? ∨ ¬x ∨ y )
+x	y	1	2	3	4	5	
+0	0	?	YES	YES	YES	YES	
+1	0	YES	YES	YES	?	?	
+0	1	YES	?	?	YES	YES	
+1	1	YES	YES	YES	YES	YES	
+
+Group Branch:
+5 
+|  1
+
+=================================================
+

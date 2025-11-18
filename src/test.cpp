@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <iostream>
 #include <sstream>
+#include <functional>
 
 using namespace std;
 
@@ -419,6 +420,51 @@ void test_no_unknown_literal()
     }
 }
 
+function<int(CNF *)> create_pos_func(set<Literal *, LiteralPtrLess> need_lits, set<Literal *, LiteralPtrLess> no_lits)
+{
+    return [need_lits, no_lits](CNF *cnf)
+    {
+        for (int i = 0; i < cnf->clauses.size(); ++i)
+        {
+            Clause *now_clause = cnf->clauses[i];
+
+            bool flag = false;
+
+            // print_clause(*now_clause);
+
+            for (Literal *l : now_clause->lits)
+            {
+
+                // cout << "compare(" << (*need_lits.begin())->id << "," << l->id << ") = "
+                //      << LiteralPtrLess{}((*need_lits.begin()), l) << " / "
+                //      << LiteralPtrLess{}(l, (*need_lits.begin())) << endl;
+
+                if (no_lits.find(l) != no_lits.end())
+                {
+                    // cout << "break!" << endl;
+                    flag = true;
+                    break;
+                }
+            }
+            // cout << endl;
+
+            for (Literal *l : need_lits)
+            {
+                if (now_clause->lits.find(l) == now_clause->lits.end())
+                {
+                    flag = true;
+                    break;
+                }
+            }
+
+            if (!flag)
+                return i;
+        }
+
+        return 0;
+    };
+}
+
 void printProgress_test(double percentage)
 {
     int pb_length = 60;
@@ -472,11 +518,36 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
     for (CNF *cnf : variants)
     {
         // try k = ids.size()
-        vector<int> approx_group_branch = cnf->branch_group(ids, ids.size());
-        double small_try_bf = branching_factor(approx_group_branch);
+        // vector<int> approx_group_branch = cnf->branch_group(ids, ids.size());
+        // double small_try_bf = branching_factor(approx_group_branch);
 
-        if (small_try_bf >= C)
+        // if (small_try_bf >= C)
+        // {
+        //     vector<int> group_branch = cnf->branch_group(ids, -1);
+        //     double bf = branching_factor(group_branch);
+
+        //     if (bf >= C)
+        //     {
+        //         filtered_variants.push_back(cnf);
+        //     }
+        // }
+
+        bool flag = false;
+        for (int k = 2; k <= ids.size(); ++k)
         {
+            vector<int> approx_group_branch = cnf->branch_group(ids, k);
+            double small_try_bf = branching_factor(approx_group_branch);
+
+            if (small_try_bf < C)
+            {
+                flag = true;
+                break;
+            }
+        }
+
+        if (!flag)
+        {
+            // filtered_variants.push_back(cnf);
             vector<int> group_branch = cnf->branch_group(ids, -1);
             double bf = branching_factor(group_branch);
 
@@ -506,6 +577,7 @@ void print_help_universal()
 {
     cout << "Список команд:\n";
     cout << "   add [var_name] [i] [j] [SINGLETON | ANY]\t\tДобавить переменную (i, j), если SINGLETON, то синглтон\n";
+    cout << "   addpos [var_name] [need_names] [no_names]\t\tДобавить новую переменную в первую клозу, в которой есть все\n\t\t\t\t\t\t\tпеременные из need_names и нет ни одной из no_names. Ввод разделяется строчками\n";
     cout << "   set [branching factor]                  \t\tУстановить порог С (по умолчанию равен 1.28854 или [6 6 5 5])\n";
     cout << "   branch                                  \t\tОбычное отсеивание + с группировкой бренчингом всех вариантов ниже С\n";
     cout << "   simple_branch                           \t\tОбычное отсеивание без группировки бренчингом всех вариантов ниже С\n";
@@ -513,6 +585,7 @@ void print_help_universal()
     cout << "   head [n]                                \t\tВывести [n] первых вариантов сейчас\n";
     cout << "   print [i]                               \t\tВывести [i] вариант и разобрать по переменным\n";
     cout << "   factor [vector]                         \t\tВывести branching factor для заданного вектора\n";
+    cout << "   setposfunc [need_names] [no_names]      \t\tЗафиксировать позиционную функцию, которая будет выводиться в print\n";
     cout << "   help                                    \t\tВывести список команд (этот)\n";
     cout << "   exit                                    \t\tВыйти из тестирования\n\n";
 }
@@ -520,6 +593,10 @@ void print_help_universal()
 void test_universal()
 {
     progress_counter_test = 0;
+
+    auto posfunc = create_pos_func(set<Literal *, LiteralPtrLess>(), set<Literal *, LiteralPtrLess>());
+
+    vector<LiteralDegType> variants = POSSIBLE_LITERALS;
 
     CNF cnf;
 
@@ -577,12 +654,147 @@ void test_universal()
             continue;
         }
 
+        if (command == "addpos")
+        {
+            string var_name;
+            cin >> var_name;
+
+            if (VAR2ID.count(var_name) != 0)
+            {
+                cout << "Это имя переменной уже занято. Попробуйте другое название переменной\n";
+                continue;
+            }
+
+            Literal new_lit = Literal(var_name);
+            ids.push_back(new_lit.id);
+            vars.push_back(var_name);
+
+            string l;
+
+            getline(cin, l);
+            getline(cin, l);
+
+            stringstream ss(l);
+            string token;
+
+            set<Literal *, LiteralPtrLess> need_lits;
+
+            cout << "NEED_NAMES:\t";
+            while (getline(ss, token, ' '))
+            {
+                // need_names.push_back(token);
+                if (token[0] == '-')
+                {
+                    cout << "¬" << token.substr(1) << " ";
+                    need_lits.insert(new Literal(token.substr(1), true));
+                }
+                else
+                {
+                    cout << token << " ";
+                    need_lits.insert(new Literal(token));
+                }
+            }
+            cout << endl;
+
+            getline(cin, l);
+            ss = stringstream(l);
+
+            set<Literal *, LiteralPtrLess> no_lits;
+
+            cout << "NO_NAMES:\t";
+            while (getline(ss, token, ' '))
+            {
+                if (token[0] == '-')
+                {
+                    cout << "¬" << token.substr(1) << " ";
+                    no_lits.insert(new Literal(token.substr(1), true));
+                }
+                else
+                {
+                    cout << token << " ";
+                    no_lits.insert(new Literal(token));
+                }
+            }
+            cout << endl;
+
+            auto _posfunc = create_pos_func(need_lits, no_lits);
+
+            vector<CNF *> new_lit_variants;
+
+            for (CNF *cnf : cur)
+            {
+                auto new_vars = add_new_var_in_place(cnf, var_name, _posfunc, variants);
+                new_lit_variants.resize(new_lit_variants.size() + new_vars.size());
+                copy(new_vars.begin(), new_vars.end(), new_lit_variants.rbegin());
+            }
+
+            swap(cur, new_lit_variants);
+
+            cout << "В текущем рассмотрении [" << cur.size() << "] вариантов\n\n";
+
+            continue;
+        }
+
         if (command == "set")
         {
             cin >> C;
 
             cout << "C = " << C << "\n\n";
 
+            continue;
+        }
+
+        if (command == "setposfunc")
+        {
+            string l;
+
+            getline(cin, l);
+            getline(cin, l);
+
+            stringstream ss(l);
+            string token;
+
+            set<Literal *, LiteralPtrLess> need_lits;
+
+            cout << "NEED_NAMES:\t";
+            while (getline(ss, token, ' '))
+            {
+                // need_names.push_back(token);
+                if (token[0] == '-')
+                {
+                    cout << "¬" << token.substr(1) << " ";
+                    need_lits.insert(new Literal(token.substr(1), true));
+                }
+                else
+                {
+                    cout << token << " ";
+                    need_lits.insert(new Literal(token));
+                }
+            }
+            cout << endl;
+
+            getline(cin, l);
+            ss = stringstream(l);
+
+            set<Literal *, LiteralPtrLess> no_lits;
+
+            cout << "NO_NAMES:\t";
+            while (getline(ss, token, ' '))
+            {
+                if (token[0] == '-')
+                {
+                    cout << "¬" << token.substr(1) << " ";
+                    no_lits.insert(new Literal(token.substr(1), true));
+                }
+                else
+                {
+                    cout << token << " ";
+                    no_lits.insert(new Literal(token));
+                }
+            }
+            cout << endl;
+
+            posfunc = create_pos_func(need_lits, no_lits);
             continue;
         }
 
@@ -637,6 +849,31 @@ void test_universal()
                 cout << r << " ";
             cout << "\n|  " << branching_factor(group_branch);
             cout << "\n\n";
+
+            cout << "Pos Func:\t";
+            cout << posfunc(cur.at(i)) << "\n\n";
+
+            continue;
+        }
+
+        if (command == "printall")
+        {
+            for (int i = 0; i < cur.size(); ++i)
+            {
+                pretty_branch_print(vars, cur.at(i));
+                cout << endl;
+
+                vector<int> reg_branch = cur.at(i)->branch(ids);
+                vector<int> group_branch = cur.at(i)->branch_group(ids);
+
+                cout << "Group Branch:\n";
+                for (int r : group_branch)
+                    cout << r << " ";
+                cout << "\n|  " << branching_factor(group_branch);
+                cout << "\n\n";
+                cout << "=================================================\n\n";
+
+            }
 
             continue;
         }

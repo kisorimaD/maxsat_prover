@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include <set>
+#include <functional>
 
 using namespace std;
 
@@ -14,8 +15,6 @@ extern int ID_COUNTER;
 struct{
     int MAXIMUM_CLAUSE_SIZE;
 } MaxSATSettings;
-
-void preprocess(int maximum_clause_size = -1);
 
 class Literal
 {
@@ -57,6 +56,21 @@ public:
     bool empty;
 };
 
+enum LitType
+{
+    SINGLETON,
+    NON_SINGLETON,
+    ANY
+};
+
+struct LiteralDegType{
+    int i;
+    int j;
+    LitType type;
+};
+
+extern vector <LiteralDegType> POSSIBLE_LITERALS; 
+
 struct RRuleInfo
 {
     int clauses_reduced;
@@ -85,17 +99,14 @@ public:
     vector<Clause *> clauses;
 };
 
-enum LitType
-{
-    SINGLETON,
-    NON_SINGLETON,
-    ANY
-};
+vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type); //,const std::function<bool(int, bool, bool, Clause*)>& condition_func = [](int, bool, bool, Clause*){ return true; });
+vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector <LiteralDegType> variants = POSSIBLE_LITERALS);
 
-vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type);
 
 bool is_A_subset_of_B(int A, int B);
 double branching_factor(const vector<int> &a, double tol = 1e-12);
 
 void print_clause(Clause &c);
 void print_cnf(CNF &cnf);
+
+void preprocess(int maximum_clause_size = -1);

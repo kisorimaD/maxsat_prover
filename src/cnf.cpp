@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <math.h>
 #include <string>
+#include <functional>
 
 // #include <fstream>
 
@@ -14,6 +15,7 @@ map<int, string> ID2VAR;
 map<string, int> VAR2ID;
 int ID_COUNTER = 1;
 Literal UNKNOWN_LITERAL = Literal();
+vector <LiteralDegType> POSSIBLE_LITERALS;
 
 Literal::Literal()
 {
@@ -198,7 +200,7 @@ bool get_next_partition(std::vector<int> &c, int k)
                 mx = c[j];
 
         int limit = mx + 1;
-        if(k != -1 && limit > k - 1)
+        if (k != -1 && limit > k - 1)
             limit = k - 1;
 
         if (c[i] < limit)
@@ -296,12 +298,16 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             int gclauses = 0;
             int gnoclauses = 0;
 
-            vector<int> clause_used(rclauses.size(), -1);
+            int partition_size = 0;
+
+            vector<int> clause_used((*this).clauses.size(), -1);
 
             for (int i = 0; i < rcnt; ++i)
             {
                 if (cs[i] == c)
                 {
+                    partition_size++;
+
                     if (!has_class)
                     {
                         gclauses = rclauses[i];
@@ -315,21 +321,21 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                     for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
                     {
-                        if ((rclauses[i] >> cl) & 1)
+                        if (((rclauses[i] >> cl) & 1) == 0)
                         {
-                            if (clause_used[i] == -1)
+                            if (clause_used[cl] == -1)
                             {
-                                clause_used[i] = i;
+                                clause_used[cl] = i;
                             }
                             else
                             {
-                                clause_used[i] = -2;
+                                clause_used[cl] = -2;
                             }
                         }
 
                         if ((no_clauses[i] >> cl) & 1)
                         {
-                            clause_used[i] = -2;
+                            clause_used[cl] = -2;
                         }
                     }
 
@@ -347,7 +353,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 }
             }
 
-            int abc_reduced = max((int)used_lits.size() - 1, 0);
+            // int abc_reduced = max((int)used_lits.size() - 1, 0);
+            int abc_reduced = used_lits.size() == partition_size ? partition_size - 1 : 0;
 
             if (has_class)
             {
@@ -356,7 +363,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                     got_zero = true;
                     break;
                 }
-                now_branch.push_back(count_set_bits(gclauses) + count_set_bits(gnoclauses) - abc_reduced);
+                now_branch.push_back(count_set_bits(gclauses) + count_set_bits(gnoclauses) + abc_reduced);
             }
         }
 
@@ -545,6 +552,12 @@ void preprocess(int maximum_clause_size)
     VAR2ID["?"] = 0;
 
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
+
+    POSSIBLE_LITERALS = {
+        {3, 2, ANY},
+        {2, 3, ANY},
+    // };
+        {4, 1, SINGLETON}};
 }
 
 string join(vector<string> a, string del)
@@ -620,7 +633,7 @@ string cnf_to_max_string(CNF *cnf)
     return max_str;
 }
 
-vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
+vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitType type, int pos = -1, bool only_pos = false)
 {
     // a + b = s
     // В 0 <= a <= i клозах литерал встречается с x
@@ -661,8 +674,24 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 
                     CNF *now_cnf = new CNF(*cnf);
 
+                    bool var_skip = false;
+
                     for (int k = 0; k < cnf_size; ++k)
                     {
+
+                        if (only_pos && pos == k)
+                        {
+                            if (m[k] && xm[xm_ind])
+                            {
+                                
+                            }
+                            else
+                            {
+                                var_skip = true;
+                                break;
+                            }
+                        }
+
                         if (m[k])
                         {
                             if (now_cnf->clauses[k]->lits.find(&UNKNOWN_LITERAL) != now_cnf->clauses[k]->lits.end())
@@ -678,15 +707,15 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
                             }
                             else
                             {
-                                xm_ind++;
-                                continue;
+                                var_skip = true;
+                                break;
                             }
                         }
+                    }
 
-                        if (k == 0 && !m[k])
-                        {
-                            now_cnf->clauses[0]->lits.erase(&UNKNOWN_LITERAL);
-                        }
+                    if(var_skip)
+                    {
+                        continue;
                     }
 
                     for (int k = 0; k < (i - a); ++k) // Добиваем остатки в новых клозах
@@ -753,6 +782,40 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 
         } while (prev_permutation(m.begin(), m.end()));
     }
+
+    return ans;
+}
+
+vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
+{
+    return add_new_var_universal(cnf, v_name, i, j, type);
+}
+
+vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector<LiteralDegType> variants)
+{
+    int pos = need_index_func(cnf);
+
+    vector<CNF *> ans;
+
+    // auto new_vars = add_new_var(cnf, var_name, i, j, new_type);
+    // new_lit_variants.resize(new_lit_variants.size() + new_vars.size());
+    // copy(new_vars.begin(), new_vars.end(), new_lit_variants.rbegin());
+
+    for (LiteralDegType l : variants)
+    {
+        auto new_vars = add_new_var_universal(cnf, v_name, l.i, l.j, l.type, pos, true);
+        ans.resize(ans.size() + new_vars.size());
+        copy(new_vars.begin(), new_vars.end(), ans.rbegin());
+    }
+
+    CNF *cnf_empty_space = new CNF(*cnf);
+
+    if (cnf_empty_space->clauses[pos]->lits.find(&UNKNOWN_LITERAL) != cnf_empty_space->clauses[pos]->lits.end())
+    {
+        cnf_empty_space->clauses[pos]->lits.erase(&UNKNOWN_LITERAL);
+    }
+
+    ans.push_back(cnf_empty_space);
 
     return ans;
 }
