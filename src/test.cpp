@@ -428,6 +428,11 @@ function<int(CNF *)> create_pos_func(set<Literal *, LiteralPtrLess> need_lits, s
         {
             Clause *now_clause = cnf->clauses[i];
 
+            if(now_clause->lits.find(&UNKNOWN_LITERAL) == now_clause->lits.end())
+            {
+                continue;
+            }
+
             bool flag = false;
 
             // print_clause(*now_clause);
@@ -610,6 +615,7 @@ void test_universal()
     print_help_universal();
 
     double C = 1.28855;
+    // double C = 1.272;
 
     while (command != "exit")
     {

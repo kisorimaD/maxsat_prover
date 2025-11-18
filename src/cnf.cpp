@@ -554,9 +554,10 @@ void preprocess(int maximum_clause_size)
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
 
     POSSIBLE_LITERALS = {
-        {3, 2, ANY},
-        {2, 3, ANY},
-    // };
+        // {2, 2, ANY},
+        // {3, 2, ANY},
+        // {2, 3, ANY},
+        {3, 1, SINGLETON},
         {4, 1, SINGLETON}};
 }
 
@@ -810,12 +811,13 @@ vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<
 
     CNF *cnf_empty_space = new CNF(*cnf);
 
-    if (cnf_empty_space->clauses[pos]->lits.find(&UNKNOWN_LITERAL) != cnf_empty_space->clauses[pos]->lits.end())
+    if (pos < cnf_empty_space->clauses.size() && cnf_empty_space->clauses[pos]->lits.find(&UNKNOWN_LITERAL) != cnf_empty_space->clauses[pos]->lits.end())
     {
         cnf_empty_space->clauses[pos]->lits.erase(&UNKNOWN_LITERAL);
     }
 
-    ans.push_back(cnf_empty_space);
+    if(cnf_empty_space->clauses.size() != 0)
+        ans.push_back(cnf_empty_space);
 
     return ans;
 }
