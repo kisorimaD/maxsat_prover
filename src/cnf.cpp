@@ -6,6 +6,7 @@
 #include <math.h>
 #include <string>
 #include <functional>
+#include <unordered_set>
 
 // #include <fstream>
 
@@ -15,7 +16,7 @@ map<int, string> ID2VAR;
 map<string, int> VAR2ID;
 int ID_COUNTER = 1;
 Literal UNKNOWN_LITERAL = Literal();
-vector <LiteralDegType> POSSIBLE_LITERALS;
+vector<LiteralDegType> POSSIBLE_LITERALS;
 
 Literal::Literal()
 {
@@ -122,6 +123,17 @@ void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask, v
     }
 }
 
+int count_set_bits(int n)
+{
+    int cnt = 0;
+    while (n)
+    {
+        n &= (n - 1);
+        cnt++;
+    }
+    return cnt;
+}
+
 vector<int> CNF::branch(vector<int> ids)
 {
 
@@ -139,6 +151,8 @@ vector<int> CNF::branch(vector<int> ids)
     {
         bool is_subset = false;
 
+        int max_val = (*this).clauses.size() - count_set_bits(no_clauses_mask[mask]); // YES + "?"
+
         for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
         {
             if (mask == other_mask)
@@ -150,6 +164,17 @@ vector<int> CNF::branch(vector<int> ids)
                 {
                     continue;
                 }
+            }
+
+            if (count_set_bits(clauses_mask[other_mask]) >= max_val)
+            {
+                if ((*this).clauses.size() - no_clauses_mask[other_mask] <= clauses_mask[mask] && other_mask > mask)
+                {
+                    continue;
+                }
+                
+                is_subset = true;
+                break;
             }
 
             if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
@@ -216,17 +241,6 @@ bool get_next_partition(std::vector<int> &c, int k)
     return false;
 }
 
-int count_set_bits(int n)
-{
-    int cnt = 0;
-    while (n)
-    {
-        n &= (n - 1);
-        cnt++;
-    }
-    return cnt;
-}
-
 vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 {
     int k = ids.size();
@@ -247,6 +261,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
     {
         bool is_subset = false;
 
+        int max_val = (*this).clauses.size() - count_set_bits(no_clauses_mask[mask]); // YES + "?"
+
         for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
         {
             if (mask == other_mask)
@@ -258,6 +274,17 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 {
                     continue;
                 }
+            }
+
+            if (count_set_bits(clauses_mask[other_mask]) >= max_val)
+            {
+                if ((*this).clauses.size() - no_clauses_mask[other_mask] <= clauses_mask[mask] && other_mask > mask)
+                {
+                    continue;
+                }
+
+                is_subset = true;
+                break;
             }
 
             if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
@@ -546,19 +573,27 @@ void print_cnf(CNF &cnf)
     cout << endl;
 }
 
+unordered_set<string> *used;
+
 void preprocess(int maximum_clause_size)
 {
+
+    used = (new unordered_set <string>());
     ID2VAR[0] = "?";
     VAR2ID["?"] = 0;
 
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
 
     POSSIBLE_LITERALS = {
-        // {2, 2, ANY},
-        // {3, 2, ANY},
-        // {2, 3, ANY},
-        {3, 1, SINGLETON},
-        {4, 1, SINGLETON}};
+        {1, 3, ANY},
+        {3, 1, ANY},
+        {2, 2, ANY},
+        {3, 2, ANY},
+        {2, 3, ANY},
+        {1, 4, ANY},
+        {4, 1, ANY}};
+        // {3, 1, SINGLETON},
+        // {4, 1, SINGLETON}};
 }
 
 string join(vector<string> a, string del)
@@ -634,6 +669,8 @@ string cnf_to_max_string(CNF *cnf)
     return max_str;
 }
 
+// set<string> used;
+
 vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitType type, int pos = -1, bool only_pos = false)
 {
     // a + b = s
@@ -641,7 +678,6 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitTy
     // В 0 <= b <= j клозах он встречается с ~x
     // Остальное в новых клозах
 
-    set<string> used;
 
     vector<CNF *> ans;
 
@@ -684,7 +720,6 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitTy
                         {
                             if (m[k] && xm[xm_ind])
                             {
-                                
                             }
                             else
                             {
@@ -714,7 +749,7 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitTy
                         }
                     }
 
-                    if(var_skip)
+                    if (var_skip)
                     {
                         continue;
                     }
@@ -770,10 +805,10 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitTy
 
                     string now_cnf_str = cnf_to_max_string(now_cnf);
 
-                    if (used.find(now_cnf_str) == used.end())
+                    if (used->find(now_cnf_str) == used->end())
                     {
                         ans.push_back(now_cnf);
-                        used.insert(now_cnf_str);
+                        used->insert(now_cnf_str);
                     }
 
                     // ans.push_back(now_cnf);
@@ -816,7 +851,7 @@ vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<
         cnf_empty_space->clauses[pos]->lits.erase(&UNKNOWN_LITERAL);
     }
 
-    if(cnf_empty_space->clauses.size() != 0)
+    if (cnf_empty_space->clauses.size() != 0)
         ans.push_back(cnf_empty_space);
 
     return ans;
