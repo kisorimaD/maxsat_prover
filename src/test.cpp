@@ -884,6 +884,23 @@ void test_universal()
             continue;
         }
 
+
+        if (command == "printworst")
+        {
+            double worst = -1;
+            for (int i = 0; i < cur.size(); ++i)
+            {
+                vector<int> group_branch = cur.at(i)->branch_group(ids);
+
+                double gfactor = branching_factor(group_branch);
+                worst = max(worst, gfactor);
+            }
+
+            cout << "| " << worst << "\n\n";
+
+            continue;
+        }
+
         if (command == "factor")
         {
             std::string l;
