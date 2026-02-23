@@ -267,7 +267,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
     calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
 
-    vector<int> rclauses;
+    vector<int> rclauses; // Маски выполненных клоз (YES) для каждой оставшейся подстановки [rcnt]
     vector<int> no_clauses;
     vector<int> masks; // Маска подстановки для оставшихся подстановок
 
@@ -415,47 +415,46 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
             // Проверка с помощью афинного пространства
 
-            set <int> masks_set;
-            for(int i = 0; i < rcnt; ++i)
+            set<int> masks_set;
+            for (int i = 0; i < rcnt; ++i)
             {
-                if(cs[i] == c)
+                if (cs[i] == c)
                 {
                     masks_set.insert(masks[i]);
                 }
             }
 
-            for(int i = 0; i < rcnt; ++i)
+            for (int i = 0; i < rcnt; ++i)
             {
-                if(cs[i] != c)
+                if (cs[i] != c)
                     continue;
 
-                for(int j = i + 1; j < rcnt; ++j)
+                for (int j = i + 1; j < rcnt; ++j)
                 {
-                    if(cs[j] != c)
+                    if (cs[j] != c)
                         continue;
-                    
-                    for(int z = j + 1; z < rcnt; ++z)
-                    {
-                        if(cs[z] != c)
-                            continue;
-                        
-                        int sup_mask = masks[i] ^  masks[j] ^ masks[z];
 
-                        if(masks_set.find(sup_mask) == masks_set.end())
+                    for (int z = j + 1; z < rcnt; ++z)
+                    {
+                        if (cs[z] != c)
+                            continue;
+
+                        int sup_mask = masks[i] ^ masks[j] ^ masks[z];
+
+                        if (masks_set.find(sup_mask) == masks_set.end())
                         {
                             cant_merge = true;
                             break;
                         }
                     }
 
-                    if(cant_merge)
+                    if (cant_merge)
                         break;
                 }
 
-                if(cant_merge)
+                if (cant_merge)
                     break;
             }
-
 
             if (cant_merge)
             {
@@ -463,43 +462,144 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 break;
             }
 
-            // vector<int> abc_clauses(rcnt, 0);
+            bool cross_reduce = false;
 
-            // for (int i = 0; i < (int)clause_used.size(); ++i)
-            // {
-            //     if (clause_used[i] >= 0)
-            //     {
-            //         abc_clauses[clause_used[i]]++;
-            //     }
-            // }
+            if (partition_size > 2)
+            {
+                int cross_row = -1;
+                bool found_cross = false;
 
-            // int mn = clause_used.size(), mx = -1;
+                for (int i = 0; i < rcnt; ++i)
+                {
+                    if (cs[i] != c)
+                        continue;
 
-            // for (int i = 0; i < rcnt; ++i)
-            // {
-            //     if (cs[i] == c)
-            //     {
-            //         mn = abc_clauses[i] < mn ? abc_clauses[i] : mn;
-            //         mx = abc_clauses[i] > mx ? abc_clauses[i] : mx;
-            //     }
-            // }
+                    bool valid_cross = true;
 
-            // if (mn != mx || mn != 1)
-            // {
-            //     // no_merge_config = true;
-            //     // break;
-            //     mn = 0; // Нельзя использовать abc reduce
-            // }
+                    int lastz = 0;
+                    int zcnt = 0; // количество невыполненных клоз
+                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                    {
+                        if (((rclauses[i] >> cl) & 1) == 0 && !clause_only_no[cl])
+                        {
+                            // valid_cross = false;
+                            zcnt++;
+                            lastz = cl;
+                            // break;
+                        }
+                    }
 
-            // print_cnf(*this);
-            // for (int x : abc_clauses)
-            //     cout << x << " ";
-            // cout << endl << endl;
+                    if (zcnt == 1)
+                    { // Проверяем единицы на столбце с одним нулём
+                        for (int sub = 0; sub < rcnt; ++sub)
+                        {
+                            if (cs[sub] != c || sub == i)
+                                continue;
 
-            // int abc_reduced = used_lits.size() == partition_size ? partition_size - 1 : 0;
-            // int abc_reduced = (partition_size - 1) * mn;
-            bool lemma3 = false;
+                            if (((rclauses[sub] >> lastz) & 1) == 0)
+                            {
+                                valid_cross = false;
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        valid_cross = false;
+                    }
+
+                    if (valid_cross)
+                    {
+                        found_cross = true;
+                        cross_row = i;
+                        break;
+                    }
+                }
+
+                if (found_cross)
+                {
+                    // Пытаемся найти две подстановки с нужными клозами
+
+                    for (int i = 0; i < rcnt; ++i) // первая строчка
+                    {
+                        if (cs[i] != c)
+                            continue;
+
+                        if (i == cross_row)
+                        {
+                            continue;
+                        }
+
+                        bool flag; // Не нашли ни одной клозы, которая выполняется в i, j по разному, и при этом не выполнена везде в других местах
+
+                        for (int j = i + 1; j < rcnt; ++j) // вторая строчка
+                        {
+                            flag = true;
+
+                            if (cs[j] != c || j == cross_row)
+                                continue;
+
+                            int icnt = 0; // Количество подходящих клоз для строчки i
+                            int jcnt = 0; // Количество подходящих клоз для строчки j
+
+                            // Бежим по клозам
+                            for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                            {
+                                bool hasi = (((rclauses[i] >> cl) & 1) == 1);
+                                bool hasj = (((rclauses[i] >> cl) & 1) == 1);
+
+                                if (!(hasi ^ hasj))
+                                {
+                                    continue; // В этих строчках одинаковые значения на этих местах, пропускаем
+                                }
+
+                                // Значит эта клоза выполнилась в одном из i, j, но не в другом
+                                // Проверим, что в остальных местах она 1
+
+                                for (int sub = 0; sub < rcnt; ++sub)
+                                {
+                                    if (cs[sub] != c || sub == i || sub == j)
+                                        continue;
+
+                                    if (((rclauses[sub] >> cl) & 1) == 0)
+                                    {
+                                        flag = false;
+                                        break;
+                                    }
+                                }
+
+                                if (!flag)
+                                {
+                                    break;
+                                }
+
+                                if (hasi)
+                                    icnt++;
+                                else
+                                    jcnt++;
+                            }
+
+                            if (!flag)
+                                continue;
+
+                            if ((icnt == 1 && jcnt >= 1) || (icnt >= 1 && jcnt == 1))
+                            {
+                                cross_reduce = true;
+                                break;
+                            }
+                        }
+
+                        if (cross_reduce)
+                            break;
+                    }
+                }
+            }
+
+            bool lemma3_2partition = false;
             bool var2reduce = false;
+            int D = 0;
+
+            bool lemma3_general = false; // Лемма 3 для группировки не на 2 подстановки
 
             if (partition_size == 2)
             {
@@ -521,9 +621,58 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                 if (var_count == 3)
                 {
-                    lemma3 = true;
-                    // Вообще по Лемме 3 можно побренчить на {1, t}, t:= max(8, |D|), где D - это клоза с ¬x если x - (2, 1)
-                    // Но пусть пока будет просто 8
+                    lemma3_2partition = true;
+                    // Вообще по Лемме 3 можно побренчить на {1, t}, t:= max(8, 7 + 2|D|), где D - это клоза с ¬x если x - (2, 1)
+                    // Давайте посмотрим сколько переменных мы точно знаем из нужной клозы
+
+                    int first_cnt = 0, second_cnt = 0;
+                    int first_last_clause = -1, second_last_clause = -1;
+
+                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                    {
+                        if (((clause_result_xor_mask >> cl) & 1) == 1)
+                        {
+                            for (int sub = 0; sub < rcnt; ++sub)
+                            {
+                                if (cs[sub] != c)
+                                    continue;
+
+                                if (((rclauses[sub] >> cl) & 1) == 1)
+                                {
+                                    first_cnt++;
+                                    first_last_clause = cl;
+                                }
+                                else
+                                {
+                                    second_cnt++;
+                                    second_last_clause = cl;
+                                }
+
+                                break;
+                            }
+                        }
+                    }
+
+                    assert(first_cnt == 1 || second_cnt == 1);
+
+                    if (first_cnt == 1)
+                    {
+                        D = (this->clauses[first_last_clause]->lits.size());
+
+                        if (this->clauses[first_last_clause]->lits.find(&UNKNOWN_LITERAL) != this->clauses[first_last_clause]->lits.end())
+                        {
+                            D--;
+                        }
+                    }
+                    else if (second_cnt == 1)
+                    {
+                        D = (this->clauses[second_last_clause]->lits.size());
+
+                        if (this->clauses[second_last_clause]->lits.find(&UNKNOWN_LITERAL) != this->clauses[second_last_clause]->lits.end())
+                        {
+                            D--;
+                        }
+                    }
                 }
                 else if (var_count == 2)
                 {
@@ -531,6 +680,11 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                     // Заметим, что в таком случае эти 2 клозы не могут быть одинаковыми, т.к. иначе одну из них бы удалили, так как она входит в другую (с YES)
                     // То есть если при замене мы получаем две клозы с x мы понимаем, что одна из подстановок была изначально хуже другой и не должна была существовать
                 }
+            }
+
+            if(partition_size > 2)
+            {
+                // Пытаемся найти переменные с 3 вхождениями 
             }
 
             if (has_class)
@@ -543,12 +697,16 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 // now_branch.push_back(count_set_bits(gclauses) + count_set_bits(gnoclauses) + abc_reduced);
                 int basic_reduce = count_set_bits(gclauses) + count_set_bits(gnoclauses);
                 // now_branch.push_back(basic_reduce + ());
-                if (lemma3)
+                if (lemma3_2partition)
                 {
                     now_branch.push_back(basic_reduce + 1);
-                    now_branch.push_back(basic_reduce + 8);
+                    now_branch.push_back(basic_reduce + max(8, 7 + 2 * D));
                 }
                 else if (var2reduce)
+                {
+                    now_branch.push_back(basic_reduce + 1);
+                }
+                else if (cross_reduce)
                 {
                     now_branch.push_back(basic_reduce + 1);
                 }
@@ -573,40 +731,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             mn_partition = cs;
         }
 
-        // } while (get_next_product(cs));
     } while (get_next_partition(cs, max_partitions));
-
-    // ofstream opf;
-    // opf.open("partitions.txt", ios::app);
-
-    // if(opf.is_open())
-    // {
-    //     map<int, int> c_ids;
-    //     int new_id = 0;
-
-    //     for(int i = 0; i < mn_partition.size(); ++i)
-    //     {
-    //         if(c_ids.count(mn_partition[i]) == 0)
-    //         {
-    //             c_ids[mn_partition[i]] = new_id++;
-    //         }
-
-    //         opf << c_ids[mn_partition[i]] << " ";
-    //     }
-
-    //     opf << " | " << mn_factor << endl;
-    // }
-    // else
-    // {
-    //     cout << "UNABLE TO OPEN FILE\n";
-    // }
-
-    // cout << "Best branch: ";
-    // for(int x : mn_branch)
-    // {
-    //     cout << x << " ";
-    // }
-    // cout << endl;
 
     return mn_branch;
 }
@@ -769,8 +894,7 @@ void preprocess(int maximum_clause_size)
         // {1, 4, ANY},
         // {4, 1, ANY},
         {3, 1, SINGLETON},
-        {4, 1, SINGLETON}
-    };
+        {4, 1, SINGLETON}};
 }
 
 string join(vector<string> a, string del)
