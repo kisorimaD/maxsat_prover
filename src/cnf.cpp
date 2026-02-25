@@ -7,6 +7,7 @@
 #include <string>
 #include <functional>
 #include <unordered_set>
+#include <fstream>
 
 // #include <fstream>
 
@@ -241,9 +242,37 @@ bool get_next_partition(std::vector<int> &c, int k)
     return false;
 }
 
+vector<string> valid_3_partitions;
+int partition_ind;
+
+bool get_next_3_partition_fast(std::vector<int> &c, vector<bool> &mask_of_reduced_clauses)
+{
+    if (partition_ind == valid_3_partitions.size())
+        return false;
+
+    int skip_cnt = 0;
+    for (int i = 0; i < 8; ++i)
+    {
+        if (!mask_of_reduced_clauses[i])
+            c[skip_cnt++] = valid_3_partitions[partition_ind][i] - '0';
+    }
+
+    partition_ind++;
+
+    return true;
+}
+
 vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 {
+    partition_ind = 0;
+    
     int k = ids.size();
+
+    bool is_3_case = false; // Случай, когда формулу группируют по 3 переменным. Для него предподсчитаны все разбиения
+    if (k == 3)
+    {
+        is_3_case = true;
+    }
 
     set<int> using_ids;
     for (Clause *cl : this->clauses)
@@ -267,7 +296,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
     calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
 
-    vector<int> rclauses; // Маски выполненных клоз (YES) для каждой оставшейся подстановки [rcnt]
+    vector<bool> mask_of_reduced_subsets(1 << k, true); // Маска подстановок, которые удалили
+    vector<int> rclauses;                               // Маски выполненных клоз (YES) для каждой оставшейся подстановки [rcnt]
     vector<int> no_clauses;
     vector<int> masks; // Маска подстановки для оставшихся подстановок
 
@@ -313,6 +343,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             rclauses.push_back(clauses_mask[mask]);
             no_clauses.push_back(no_clauses_mask[mask]);
             masks.push_back(mask);
+            mask_of_reduced_subsets[mask] = false;
         }
     }
 
@@ -398,54 +429,45 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             bool cant_merge = false;
 
             // Проверка на то, можем ли мы сгруппировать данный класс
-
-            // if (partition_size >= 3)
-            // {
-            //     if (k == 2)
-            //     {
-            //         // cant_merge = !(rcnt == 4 && cs[3] == c); // Если одна из подстановок мажорируется то в таком случае в группе все подстановки, такое можно не рассмотривать
-            //         // Если же rcnt == 4, то единственная группа, которую нельзя группировать - это 00 01 10
-            //         cant_merge = true;
-            //     }
-            //     else
-            //     {
-            //         cant_merge = true;
-            //     }
-            // }
-
             // Проверка с помощью афинного пространства
 
-            set<int> masks_set;
-            for (int i = 0; i < rcnt; ++i)
+            if(!is_3_case) // В случае 3 переменных всё предподсчитано и проверено
             {
-                if (cs[i] == c)
+                set<int> masks_set;
+                for (int i = 0; i < rcnt; ++i)
                 {
-                    masks_set.insert(masks[i]);
+                    if (cs[i] == c)
+                    {
+                        masks_set.insert(masks[i]);
+                    }
                 }
-            }
 
-            for (int i = 0; i < rcnt; ++i)
-            {
-                if (cs[i] != c)
-                    continue;
-
-                for (int j = i + 1; j < rcnt; ++j)
+                for (int i = 0; i < rcnt; ++i)
                 {
-                    if (cs[j] != c)
+                    if (cs[i] != c)
                         continue;
 
-                    for (int z = j + 1; z < rcnt; ++z)
+                    for (int j = i + 1; j < rcnt; ++j)
                     {
-                        if (cs[z] != c)
+                        if (cs[j] != c)
                             continue;
 
-                        int sup_mask = masks[i] ^ masks[j] ^ masks[z];
-
-                        if (masks_set.find(sup_mask) == masks_set.end())
+                        for (int z = j + 1; z < rcnt; ++z)
                         {
-                            cant_merge = true;
-                            break;
+                            if (cs[z] != c)
+                                continue;
+
+                            int sup_mask = masks[i] ^ masks[j] ^ masks[z];
+
+                            if (masks_set.find(sup_mask) == masks_set.end())
+                            {
+                                cant_merge = true;
+                                break;
+                            }
                         }
+
+                        if (cant_merge)
+                            break;
                     }
 
                     if (cant_merge)
@@ -453,13 +475,10 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 }
 
                 if (cant_merge)
+                {
+                    no_merge_config = true;
                     break;
-            }
-
-            if (cant_merge)
-            {
-                no_merge_config = true;
-                break;
+                }
             }
 
             bool cross_reduce = false;
@@ -682,9 +701,9 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 }
             }
 
-            if(partition_size > 2)
+            if (partition_size > 2)
             {
-                // Пытаемся найти переменные с 3 вхождениями 
+                // Пытаемся найти переменные с 3 вхождениями
             }
 
             if (has_class)
@@ -731,7 +750,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             mn_partition = cs;
         }
 
-    } while (get_next_partition(cs, max_partitions));
+    } while (is_3_case ? get_next_3_partition_fast(cs, mask_of_reduced_subsets) : get_next_partition(cs, max_partitions));
 
     return mn_branch;
 }
@@ -874,7 +893,6 @@ void print_cnf(CNF &cnf)
     cout << endl;
 }
 
-
 unordered_set<string> *used;
 
 void preprocess(int maximum_clause_size)
@@ -894,8 +912,30 @@ void preprocess(int maximum_clause_size)
         {2, 3, ANY},
         // {1, 4, ANY},
         // {4, 1, ANY},
-        {3, 1, SINGLETON},
+        // {3, 1, SINGLETON},
         {4, 1, SINGLETON}};
+
+
+    ifstream infile("groups3.txt");
+    if (!infile.is_open()) {
+        cerr << "Couldn't open file with groups" << endl; 
+        return;
+    }
+
+    int N;
+    
+    if (infile.is_open()) {
+        infile >> N;
+        string line;
+        getline(infile, line); 
+        for(int i=0; i<N; ++i) {
+            infile >> line;
+            if(!line.empty()) valid_3_partitions.push_back(line);
+        }
+        infile.close();
+
+        cout << "Загружено " << valid_3_partitions.size() << " разбиений\n\n";
+    }
 }
 
 string join(vector<string> a, string del)

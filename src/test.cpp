@@ -559,8 +559,8 @@ void test_universal()
 
     print_help_universal();
 
-    double C = 1.28855;
-    // double C = 1.257;
+    // double C = 1.28855;
+    double C = 1.2873;
 
     while (command != "exit")
     {
