@@ -752,7 +752,7 @@ map<vector<int>, double> branching_factor_cache;
 
 double branching_factor(const vector<int> &a, double tol)
 {
-    if (a.empty())
+    if (a.empty() || (a.size() == 1 && a[0] == 0))
     {
         return 100.0;
     }
@@ -873,6 +873,7 @@ void print_cnf(CNF &cnf)
     }
     cout << endl;
 }
+
 
 unordered_set<string> *used;
 

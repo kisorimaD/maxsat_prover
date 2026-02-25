@@ -204,85 +204,6 @@ void test_subset_func()
     }
 }
 
-void test_branch_group()
-{
-    // Literal x = Literal("x");
-    // Literal y = Literal("y");
-    // Literal z = Literal("z");
-
-    // Literal nx = x.neg();
-    // Literal ny = y.neg();
-    // Literal nz = z.neg();
-
-    // auto v1 = (vector<Literal *>){&UNKNOWN_LITERAL, &x, &y, &z};
-    // auto v2 = (vector<Literal *>){&UNKNOWN_LITERAL, &x};
-    // auto v3 = (vector<Literal *>){&UNKNOWN_LITERAL, &nx, &y, &z};
-    // auto v4 = (vector<Literal *>){&UNKNOWN_LITERAL, &nx};
-    // auto v5 = (vector<Literal *>){&UNKNOWN_LITERAL, &nx};
-    // auto v6 = (vector<Literal *>){&UNKNOWN_LITERAL, &y, &nz};
-    // auto v7 = (vector<Literal *>){&UNKNOWN_LITERAL, &ny, &nz};
-    // auto v8 = (vector<Literal *>){&UNKNOWN_LITERAL, &ny, &z};
-
-    // Clause c1 = Clause(v1);
-    // Clause c2 = Clause(v2);
-    // Clause c3 = Clause(v3);
-    // Clause c4 = Clause(v4);
-    // Clause c5 = Clause(v5);
-    // Clause c6 = Clause(v6);
-    // Clause c7 = Clause(v7);
-    // Clause c8 = Clause(v8);
-
-    // vector<Clause *> clause_vec = {&c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8};
-
-    Literal x = Literal("x");
-    Literal nx = x.neg();
-
-    Literal y = Literal("y");
-    Literal ny = y.neg();
-
-    Literal z = Literal("z");
-    Literal nz = z.neg();
-
-    vector<Literal *> v0 = {&UNKNOWN_LITERAL, &x, &ny};
-    vector<Literal *> v1 = {&UNKNOWN_LITERAL, &x, &y};
-    vector<Literal *> v2 = {&UNKNOWN_LITERAL, &x, &y, &z};
-    vector<Literal *> v3 = {&UNKNOWN_LITERAL, &nx, &ny};
-    vector<Literal *> v4 = {&UNKNOWN_LITERAL, &nx, &y};
-    vector<Literal *> v5 = {&UNKNOWN_LITERAL, &z};
-    vector<Literal *> v6 = {&UNKNOWN_LITERAL, &z};
-    vector<Literal *> v7 = {&UNKNOWN_LITERAL, &nz};
-    vector<Literal *> v8 = {&UNKNOWN_LITERAL, &nz};
-
-    Clause c0 = Clause(v0);
-    Clause c1 = Clause(v1);
-    Clause c2 = Clause(v2);
-    Clause c3 = Clause(v3);
-    Clause c4 = Clause(v4);
-    Clause c5 = Clause(v5);
-    Clause c6 = Clause(v6);
-    Clause c7 = Clause(v7);
-    Clause c8 = Clause(v8);
-
-    vector<Clause *> clause_vec = {&c0, &c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8};
-
-    CNF cnf(clause_vec);
-
-    print_cnf(cnf);
-
-    vector<int> reg_branch = cnf.branch({x.id, y.id, z.id});
-    vector<int> group_branch = cnf.branch_group({x.id, y.id, z.id});
-
-    cout << "Regular Branch:\n";
-    for (int r : reg_branch)
-        cout << r << " ";
-    cout << endl;
-
-    cout << "Group Branch:\n";
-    for (int r : group_branch)
-        cout << r << " ";
-    cout << endl;
-}
-
 void test_add_new_var()
 {
     CNF cnf;
@@ -479,7 +400,7 @@ void printProgress_test(double percentage)
     std::cout << "\r" << val << "% [" << std::string(lpad, '#') << std::string(rpad, '-') << "]" << std::flush;
 }
 
-void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C, bool is_group_branch)
+void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C, bool is_group_branch, bool is_xiao_branch, int xiao_depth = 1)
 {
     cout << "Начинается примитивная фильтрация\n";
     vector<CNF *> filtered_variants;
@@ -496,6 +417,28 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
     }
 
     cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
+
+    if(is_xiao_branch)
+    {
+        cout << "Осталось [" << filtered_variants.size() << "]. Начинается фильтрация с Reduction Rules\n";
+
+        swap(filtered_variants, variants);
+        filtered_variants.clear();
+
+        for(CNF *cnf : variants)
+        {
+            vector <int> rrbranch = cnf->xiao_branch(xiao_depth);
+            double bf = branching_factor(rrbranch);
+
+            if (bf >= C)
+            {
+                filtered_variants.push_back(cnf);
+            }
+        }
+        
+        cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
+    }
+
 
     if (!is_group_branch)
     {
@@ -576,6 +519,8 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
     cout << "Осталось [" << filtered_variants.size() << "]\n\n";
 
     swap(variants, filtered_variants);
+
+    return;
 }
 
 void print_help_universal()
@@ -806,14 +751,25 @@ void test_universal()
 
         if (command == "simple_branch")
         {
-            branch_epoch_universal(cur, ids, C, false);
+            branch_epoch_universal(cur, ids, C, false, false);
+            cout << endl;
+            continue;
+        }
+
+        if (command == "xiao_branch")
+        {
+            int depth;
+
+            cin >> depth;
+
+            branch_epoch_universal(cur, ids, C, false, true, depth);
             cout << endl;
             continue;
         }
 
         if (command == "branch")
         {
-            branch_epoch_universal(cur, ids, C, true);
+            branch_epoch_universal(cur, ids, C, true, false);
             cout << endl;
             continue;
         }
@@ -842,6 +798,7 @@ void test_universal()
 
             vector<int> reg_branch = cur.at(i)->branch(ids);
             vector<int> group_branch = cur.at(i)->branch_group(ids);
+            vector<int> xiao_branch = cur.at(i)->xiao_branch(1);
 
             cout << "Regular Branch:\n";
             for (int r : reg_branch)
@@ -854,6 +811,13 @@ void test_universal()
             for (int r : group_branch)
                 cout << r << " ";
             cout << "\n|  " << branching_factor(group_branch);
+            cout << "\n\n";
+
+
+            cout << "Xiao Branch (Depth = 1):\n";
+            for (int r : xiao_branch)
+                cout << r << " ";
+            cout << "\n| " << branching_factor(xiao_branch);
             cout << "\n\n";
 
             cout << "Pos Func:\t";
@@ -871,12 +835,20 @@ void test_universal()
 
                 vector<int> reg_branch = cur.at(i)->branch(ids);
                 vector<int> group_branch = cur.at(i)->branch_group(ids);
+                vector<int> xiao_branch = cur.at(i)->xiao_branch(1);
 
                 cout << "Group Branch:\n";
                 for (int r : group_branch)
                     cout << r << " ";
                 cout << "\n|  " << branching_factor(group_branch);
                 cout << "\n\n";
+
+                cout << "Xiao Branch (Depth = 1):\n";
+                for (int r : xiao_branch)
+                    cout << r << " ";
+                cout << "\n| " << branching_factor(xiao_branch);
+                cout << "\n\n";
+                
                 cout << "=================================================\n\n";
 
             }

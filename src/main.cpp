@@ -18,7 +18,6 @@ void print_help()
     cout << "3branch\tTests all variants with 3 vars (x, y, z) (3,2)-literals\n";
     cout << "factor\tTests factor branch computing\n";
     cout << "subset\tInteractive test for subset func\n";
-    cout << "group\tTest for new group branching\n";
     cout << "addvar\tTest add_new_var func\n";
     cout << "nounknown\tTest no unknown literals\n";
     cout << "test\tInteractive test for branching etc.\n";
@@ -32,7 +31,6 @@ void fill_test_names()
     test_names["3branch"] = test_branch_three_vars;
     test_names["factor"] = test_branching_factor;
     test_names["subset"] = test_subset_func;
-    test_names["group"] = test_branch_group;
     test_names["start"] = solve;
     test_names["addvar"] = test_add_new_var;
     test_names["nounknown"] = test_no_unknown_literal;

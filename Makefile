@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++11 -Iinclude
+CXXFLAGS = -std=c++17 -Iinclude
 LDFLAGS = 
 
 EXE = maxsat_prover

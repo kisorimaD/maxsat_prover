@@ -71,18 +71,13 @@ struct LiteralDegType{
 
 extern vector <LiteralDegType> POSSIBLE_LITERALS; 
 
-struct RRuleInfo
-{
-    int clauses_reduced;
-    string message;
-};
 
 class CNF
 {
 
 public:
     CNF() {}
-    CNF(vector<Clause *> clauses) : clauses(clauses) {}
+    
     CNF(CNF &cnf)
     {
         clauses.resize(cnf.clauses.size());
@@ -90,14 +85,21 @@ public:
         {
             clauses[i] = new Clause(*cnf.clauses[i]);
         }
+
+        first_var_id = cnf.first_var_id;
     }
 
     vector<int> branch(vector<int> ids);
 
     vector<int> branch_group(vector<int> ids, int max_partitions = -1);
 
+    vector<int> xiao_branch(int depth);
+
     vector<Clause *> clauses;
+
 };
+
+// int calculate_F(CNF &cnf, int var_id);
 
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type); //,const std::function<bool(int, bool, bool, Clause*)>& condition_func = [](int, bool, bool, Clause*){ return true; });
 vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector <LiteralDegType> variants = POSSIBLE_LITERALS);
