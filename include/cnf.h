@@ -85,8 +85,6 @@ public:
         {
             clauses[i] = new Clause(*cnf.clauses[i]);
         }
-
-        first_var_id = cnf.first_var_id;
     }
 
     vector<int> branch(vector<int> ids);
