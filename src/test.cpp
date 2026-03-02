@@ -437,6 +437,9 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         }
         
         cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
+        
+        cout << "Осталось [" << filtered_variants.size() << "]\n\n";
+
     }
 
 

@@ -265,7 +265,7 @@ bool get_next_3_partition_fast(std::vector<int> &c, vector<bool> &mask_of_reduce
 vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 {
     partition_ind = 0;
-    
+
     int k = ids.size();
 
     bool is_3_case = false; // Случай, когда формулу группируют по 3 переменным. Для него предподсчитаны все разбиения
@@ -431,7 +431,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             // Проверка на то, можем ли мы сгруппировать данный класс
             // Проверка с помощью афинного пространства
 
-            if(!is_3_case) // В случае 3 переменных всё предподсчитано и проверено
+            if (!is_3_case) // В случае 3 переменных всё предподсчитано и проверено
             {
                 set<int> masks_set;
                 for (int i = 0; i < rcnt; ++i)
@@ -483,7 +483,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
             bool cross_reduce = false;
 
-            if (partition_size > 2)
+            if (partition_size >= 2)
             {
                 int cross_row = -1;
                 bool found_cross = false;
@@ -537,78 +537,36 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                 if (found_cross)
                 {
-                    // Пытаемся найти две подстановки с нужными клозами
+                    // Если можно выполнить cross_reduce, то все остальные подстановки - одинаковые
+                    cross_reduce = true;
 
-                    for (int i = 0; i < rcnt; ++i) // первая строчка
+                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl) // Перебираем все клозы 
                     {
-                        if (cs[i] != c)
-                            continue;
+                        char clause_result = '#'; // не инициализированное значение клозы
 
-                        if (i == cross_row)
+                        for (int i = 0; i < rcnt; ++i) // Пробегаем по всем подстановкам из нашего разбиения без cross_row
                         {
-                            continue;
-                        }
-
-                        bool flag; // Не нашли ни одной клозы, которая выполняется в i, j по разному, и при этом не выполнена везде в других местах
-
-                        for (int j = i + 1; j < rcnt; ++j) // вторая строчка
-                        {
-                            flag = true;
-
-                            if (cs[j] != c || j == cross_row)
-                                continue;
-
-                            int icnt = 0; // Количество подходящих клоз для строчки i
-                            int jcnt = 0; // Количество подходящих клоз для строчки j
-
-                            // Бежим по клозам
-                            for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                            if (cs[i] != c || i == cross_row)
                             {
-                                bool hasi = (((rclauses[i] >> cl) & 1) == 1);
-                                bool hasj = (((rclauses[i] >> cl) & 1) == 1);
-
-                                if (!(hasi ^ hasj))
+                                continue;
+                            }
+                            
+                            char now_result = (((rclauses[i] >> cl) & 1) == 0 ? 'N' : 'Y');
+                            if(clause_result == '#')
+                            {
+                                clause_result = now_result;
+                            }
+                            else
+                            {
+                                if(clause_result != now_result)
                                 {
-                                    continue; // В этих строчках одинаковые значения на этих местах, пропускаем
-                                }
-
-                                // Значит эта клоза выполнилась в одном из i, j, но не в другом
-                                // Проверим, что в остальных местах она 1
-
-                                for (int sub = 0; sub < rcnt; ++sub)
-                                {
-                                    if (cs[sub] != c || sub == i || sub == j)
-                                        continue;
-
-                                    if (((rclauses[sub] >> cl) & 1) == 0)
-                                    {
-                                        flag = false;
-                                        break;
-                                    }
-                                }
-
-                                if (!flag)
-                                {
+                                    cross_reduce = false;
                                     break;
                                 }
-
-                                if (hasi)
-                                    icnt++;
-                                else
-                                    jcnt++;
-                            }
-
-                            if (!flag)
-                                continue;
-
-                            if ((icnt == 1 && jcnt >= 1) || (icnt >= 1 && jcnt == 1))
-                            {
-                                cross_reduce = true;
-                                break;
                             }
                         }
 
-                        if (cross_reduce)
+                        if(!cross_reduce)
                             break;
                     }
                 }
@@ -716,18 +674,22 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 // now_branch.push_back(count_set_bits(gclauses) + count_set_bits(gnoclauses) + abc_reduced);
                 int basic_reduce = count_set_bits(gclauses) + count_set_bits(gnoclauses);
                 // now_branch.push_back(basic_reduce + ());
-                if (lemma3_2partition)
-                {
-                    now_branch.push_back(basic_reduce + 1);
-                    now_branch.push_back(basic_reduce + max(8, 7 + 2 * D));
-                }
-                else if (var2reduce)
+
+                // double best_branch_factor = branching_factor();
+
+
+                if (var2reduce)
                 {
                     now_branch.push_back(basic_reduce + 1);
                 }
                 else if (cross_reduce)
                 {
                     now_branch.push_back(basic_reduce + 1);
+                }
+                else if (lemma3_2partition)
+                {
+                    now_branch.push_back(basic_reduce + 1);
+                    now_branch.push_back(basic_reduce + max(8, 7 + 2 * D));
                 }
                 else
                 {
@@ -907,30 +869,33 @@ void preprocess(int maximum_clause_size)
     POSSIBLE_LITERALS = {
         // {1, 3, ANY},
         // {3, 1, ANY},
-        // {2, 2, ANY},
+        {2, 2, ANY},
         {3, 2, ANY},
         {2, 3, ANY},
         // {1, 4, ANY},
         // {4, 1, ANY},
-        // {3, 1, SINGLETON},
+        {3, 1, SINGLETON},
         {4, 1, SINGLETON}};
 
-
     ifstream infile("groups3.txt");
-    if (!infile.is_open()) {
-        cerr << "Couldn't open file with groups" << endl; 
+    if (!infile.is_open())
+    {
+        cerr << "Couldn't open file with groups" << endl;
         return;
     }
 
     int N;
-    
-    if (infile.is_open()) {
+
+    if (infile.is_open())
+    {
         infile >> N;
         string line;
-        getline(infile, line); 
-        for(int i=0; i<N; ++i) {
+        getline(infile, line);
+        for (int i = 0; i < N; ++i)
+        {
             infile >> line;
-            if(!line.empty()) valid_3_partitions.push_back(line);
+            if (!line.empty())
+                valid_3_partitions.push_back(line);
         }
         infile.close();
 
