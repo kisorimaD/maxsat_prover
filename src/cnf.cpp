@@ -509,7 +509,15 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                     }
 
                     if (zcnt == 1)
-                    { // Проверяем единицы на столбце с одним нулём
+                    { 
+                        if(((no_clauses[i] >> lastz) & 1) == 1)
+                        {
+                            // На месте cross стоит не ?, а NO. В таком случае мы не можем применить cross_reduce
+                            valid_cross = false;
+                            continue;
+                        }
+
+                        // Проверяем единицы на столбце с одним нулём
                         for (int sub = 0; sub < rcnt; ++sub)
                         {
                             if (cs[sub] != c || sub == i)
@@ -677,6 +685,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                 // double best_branch_factor = branching_factor();
 
+                // lemma3_2partition = false;
 
                 if (var2reduce)
                 {
@@ -689,7 +698,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 else if (lemma3_2partition)
                 {
                     now_branch.push_back(basic_reduce + 1);
-                    now_branch.push_back(basic_reduce + max(8, 7 + 2 * D));
+                    now_branch.push_back(basic_reduce + 8); //max(8, 7 + 2 * D));
                 }
                 else
                 {
@@ -867,13 +876,13 @@ void preprocess(int maximum_clause_size)
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
 
     POSSIBLE_LITERALS = {
-        // {1, 3, ANY},
-        // {3, 1, ANY},
+        {1, 3, ANY},
+        {3, 1, ANY},
         {2, 2, ANY},
         {3, 2, ANY},
         {2, 3, ANY},
-        // {1, 4, ANY},
-        // {4, 1, ANY},
+        {1, 4, ANY},
+        {4, 1, ANY},
         {3, 1, SINGLETON},
         {4, 1, SINGLETON}};
 

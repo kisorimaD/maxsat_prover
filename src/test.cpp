@@ -698,6 +698,47 @@ void test_universal()
             continue;
         }
 
+        if (command == "sv")
+        {
+            cout << "Введите булеву маску возможных литералов для добавления в следующем порядке (0 - не добавлять / 1 - добавить):\n";
+            cout << "{1, 3, ANY}\n{3, 1, ANY}\n{2, 2, ANY}\n{3, 2, ANY}\n{2, 3, ANY}\n{1, 4, ANY}\n{4, 1, ANY}\n{3, 1, SINGLETON}\n{4, 1, SINGLETON}}\n\n";
+            string msk;
+            cin >> msk;
+
+            vector <LiteralDegType> new_pos_literals;
+            
+            vector <LiteralDegType> tmplte = {
+        {1, 3, ANY},
+        {3, 1, ANY},
+        {2, 2, ANY},
+        {3, 2, ANY},
+        {2, 3, ANY},
+        {1, 4, ANY},
+        {4, 1, ANY},
+        {3, 1, SINGLETON},
+        {4, 1, SINGLETON}};
+
+            for(int i = 0; i < msk.size(); ++i)
+            {
+                if(msk[i] == '1')
+                    new_pos_literals.push_back(tmplte[i]);
+            }
+
+            swap(new_pos_literals, variants);
+
+            cout << "Сейчас в рассмотрении:\n";
+            for(LiteralDegType lt : variants)
+            {
+                cout << "(" << lt.i << ", " << lt.j << ")";
+                if(lt.type == SINGLETON)
+                {
+                    cout << "-singleton";
+                }
+                cout << endl;
+            }
+            continue;
+        }   
+
         if (command == "setposfunc")
         {
             string l;

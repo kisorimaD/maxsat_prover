@@ -243,6 +243,7 @@ vector<int> CNF::xiao_branch(int depth) {
     vector<int> best_branching;
     double min_tau = 1e18; // Инициализируем большим числом (худшая оценка)
     bool any_var_processed = false;
+    int best_branch_var_id = -1;
 
     // Перебираем каждую переменную как кандидата на ветвление
     for (auto const& [var_id, s] : stats) {
@@ -288,6 +289,7 @@ vector<int> CNF::xiao_branch(int depth) {
             min_tau = current_tau;
             best_branching = current_branching;
             any_var_processed = true;
+            best_branch_var_id = var_id;
         }
     }
 
