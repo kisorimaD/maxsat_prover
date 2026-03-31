@@ -8,6 +8,7 @@
 #include <functional>
 #include <unordered_set>
 #include <fstream>
+#include <limits>
 
 // #include <fstream>
 
@@ -16,7 +17,10 @@ using namespace std;
 map<int, string> ID2VAR;
 map<string, int> VAR2ID;
 int ID_COUNTER = 1;
+
 Literal UNKNOWN_LITERAL = Literal();
+Literal UNKNOWN_NOT_EMPTY_LITERAL = Literal(-1, false);
+
 vector<LiteralDegType> POSSIBLE_LITERALS;
 
 Literal::Literal()
@@ -279,7 +283,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
     {
         for (Literal *l : cl->lits)
         {
-            if (l->id != UNKNOWN_LITERAL.id)
+            if (l->id != UNKNOWN_LITERAL.id && l->id != UNKNOWN_NOT_EMPTY_LITERAL.id)
             {
                 using_ids.insert(l->id);
             }
@@ -482,6 +486,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             }
 
             bool cross_reduce = false;
+            int cross_size = -1; // Количество невыполненных клоз в остальных кроме cross подстановках (не считая клоз, которые полностью не выполнены)
 
             if (partition_size >= 2)
             {
@@ -509,8 +514,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                     }
 
                     if (zcnt == 1)
-                    { 
-                        if(((no_clauses[i] >> lastz) & 1) == 1)
+                    {
+                        if (((no_clauses[i] >> lastz) & 1) == 1)
                         {
                             // На месте cross стоит не ?, а NO. В таком случае мы не можем применить cross_reduce
                             valid_cross = false;
@@ -548,7 +553,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                     // Если можно выполнить cross_reduce, то все остальные подстановки - одинаковые
                     cross_reduce = true;
 
-                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl) // Перебираем все клозы 
+                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl) // Перебираем все клозы
                     {
                         char clause_result = '#'; // не инициализированное значение клозы
 
@@ -558,15 +563,20 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                             {
                                 continue;
                             }
-                            
+
+                            if (((rclauses[cross_row] >> cl) & 1) != ((rclauses[i] >> cl) & 1))
+                            {
+                                cross_size++;
+                            }
+
                             char now_result = (((rclauses[i] >> cl) & 1) == 0 ? 'N' : 'Y');
-                            if(clause_result == '#')
+                            if (clause_result == '#')
                             {
                                 clause_result = now_result;
                             }
                             else
                             {
-                                if(clause_result != now_result)
+                                if (clause_result != now_result)
                                 {
                                     cross_reduce = false;
                                     break;
@@ -574,7 +584,7 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                             }
                         }
 
-                        if(!cross_reduce)
+                        if (!cross_reduce)
                             break;
                     }
                 }
@@ -585,6 +595,10 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             int D = 0;
 
             bool lemma3_general = false; // Лемма 3 для группировки не на 2 подстановки
+
+            bool lemma2_general = false;
+            int lemma2_i = 0;
+            int lemma2_D = 0;
 
             if (partition_size == 2)
             {
@@ -640,24 +654,40 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                     assert(first_cnt == 1 || second_cnt == 1);
 
+                    // Если мы сужаемся на partition_size == 2, то у нас остается всего одна переменная
+
                     if (first_cnt == 1)
                     {
-                        D = (this->clauses[first_last_clause]->lits.size());
-
-                        if (this->clauses[first_last_clause]->lits.find(&UNKNOWN_LITERAL) != this->clauses[first_last_clause]->lits.end())
-                        {
-                            D--;
-                        }
+                        D = ((this->clauses[first_last_clause]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) != this->clauses[first_last_clause]->lits.end()) ? 1 : 0);
                     }
                     else if (second_cnt == 1)
                     {
-                        D = (this->clauses[second_last_clause]->lits.size());
-
-                        if (this->clauses[second_last_clause]->lits.find(&UNKNOWN_LITERAL) != this->clauses[second_last_clause]->lits.end())
-                        {
-                            D--;
-                        }
+                        D = ((this->clauses[second_last_clause]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) != this->clauses[second_last_clause]->lits.end()) ? 1 : 0);
                     }
+                    // if (first_cnt == 1)
+                    // {
+                    //     D = (this->clauses[first_last_clause]->lits.size());
+
+                    //     if (this->clauses[first_last_clause]->lits.find(&UNKNOWN_LITERAL) != this->clauses[first_last_clause]->lits.end())
+                    //     {
+                    //         D--;
+
+                    //         // if (D == 0)
+                    //         //     D = 1;
+                    //     }
+                    // }
+                    // else if (second_cnt == 1)
+                    // {
+                    //     D = (this->clauses[second_last_clause]->lits.size());
+
+                    //     if (this->clauses[second_last_clause]->lits.find(&UNKNOWN_LITERAL) != this->clauses[second_last_clause]->lits.end())
+                    //     {
+                    //         D--;
+
+                    //         // if (D == 0)
+                    //         //     D = 1;
+                    //     }
+                    // }
                 }
                 else if (var_count == 2)
                 {
@@ -669,7 +699,158 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
             if (partition_size > 2)
             {
-                // Пытаемся найти переменные с 3 вхождениями
+                // Пытаемся найти переменные с 3 вхождениями (Лемма 3)
+                // Для этого нужно пройтись по "активным" клозам, которые остаются в формуле после группировки.
+                // Клоза активна, если она не выполнена (gclauses) и не удалена (gnoclauses) во всех подстановках группы.
+
+                map<int, pair<int, int>> var_counts; // id -> {pos_count, neg_count}
+
+                for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                {
+                    // Проверяем бит клозы в общих масках
+                    // ((gclauses >> cl) & 1) == 1 -> клоза выполнена (YES) у всех
+                    // ((gnoclauses >> cl) & 1) == 1 -> клоза удалена (NO/?) у всех
+                    if (((gclauses >> cl) & 1) == 0 && ((gnoclauses >> cl) & 1) == 0)
+                    {
+                        Clause *c_ptr = this->clauses[cl];
+
+                        // Дополнительная проверка на пустоту (на всякий случай, если logic допускает)
+                        if (c_ptr->empty)
+                            continue;
+
+                        for (Literal *l : c_ptr->lits)
+                        {
+                            if (l->id != UNKNOWN_LITERAL.id && l->id != UNKNOWN_NOT_EMPTY_LITERAL.id)
+                            {
+                                if (l->inv)
+                                {
+                                    var_counts[l->id].second++;
+                                }
+                                else
+                                {
+                                    var_counts[l->id].first++;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Проверяем, есть ли переменная со структурой (2, 1) или (1, 2)
+                for (auto const &[id, counts] : var_counts)
+                {
+                    int pos = counts.first;
+                    int neg = counts.second;
+
+                    if (pos + neg == 3)
+                    {
+                        // Лемма 3 требует, чтобы переменная входила как x, x, ~x (или наоборот)
+                        if ((pos == 2 && neg == 1) || (pos == 1 && neg == 2))
+                        {
+                            lemma3_general = true;
+                            // Нашли хотя бы одну подходящую переменную,
+                            // этого достаточно для получения оценки ветвления (8, 1)
+
+                            bool need_inv = (pos == 1 ? false : true);
+
+                            for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                            {
+                                if (((gclauses >> cl) & 1) == 0 && ((gnoclauses >> cl) & 1) == 0)
+                                {
+                                    Clause *c_ptr = this->clauses[cl];
+
+                                    if (c_ptr->empty)
+                                        continue;
+
+                                    for (Literal *l : c_ptr->lits)
+                                    {
+                                        if (l->id == id && l->inv == need_inv)
+                                        {
+                                            // Оцениваем размер клозы
+                                            D = (c_ptr->lits.size() - 1);
+
+                                            if (c_ptr->lits.find(&UNKNOWN_LITERAL) != c_ptr->lits.end())
+                                            {
+                                                D--;
+
+                                                // if (D == 0)
+                                                //     D = 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            break;
+                        }
+                    }
+                }
+
+
+                // Проверяем Лемму 2: существует (i,1)- или (1,i)-переменная
+                for (auto const &[id, counts] : var_counts)
+                {
+                    int pos = counts.first;
+                    int neg = counts.second;
+
+                    if (pos == 0 || neg == 0)
+                        continue;
+
+                    if (pos == 1 || neg == 1)
+                    {
+                        int minority_is_neg = (neg == 1); // если true, то ищем клозу с ~x, иначе с x
+                        int i_val = max(pos, neg);
+                        int D_val = -1;
+
+                        for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                        {
+                            if (((gclauses >> cl) & 1) == 0 && ((gnoclauses >> cl) & 1) == 0)
+                            {
+                                Clause *c_ptr = this->clauses[cl];
+                                if (c_ptr->empty)
+                                    continue;
+
+                                bool found_target = false;
+                                for (Literal *l : c_ptr->lits)
+                                {
+                                    if (l->id == id && l->inv == minority_is_neg)
+                                    {
+                                        found_target = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!found_target)
+                                    continue;
+
+                                D_val = 0;
+                                for (Literal *l : c_ptr->lits)
+                                {
+                                    if (l->id == UNKNOWN_LITERAL.id)
+                                        continue;
+
+                                    if (l->id == UNKNOWN_NOT_EMPTY_LITERAL.id)
+                                    {
+                                        D_val += 1; // ?+ гарантирует хотя бы один другой литерал
+                                        continue;
+                                    }
+
+                                    if (l->id != id)
+                                        D_val++;
+                                }
+
+                                break;
+                            }
+                        }
+
+                        if (D_val >= 0)
+                        {
+                            lemma2_general = true;
+                            lemma2_i = i_val;
+                            lemma2_D = D_val;
+                            break;
+                        }
+                    }
+                }
             }
 
             if (has_class)
@@ -691,14 +872,31 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 {
                     now_branch.push_back(basic_reduce + 1);
                 }
-                else if (cross_reduce)
+                else if (cross_reduce && cross_size <= 2)
                 {
-                    now_branch.push_back(basic_reduce + 1);
+                    if (cross_size == 1)
+                        now_branch.push_back(basic_reduce + 1);
+                    else if (cross_size == 2)
+                    {
+                        now_branch.push_back(basic_reduce + 1);
+                        now_branch.push_back(basic_reduce + 8);
+                    }
                 }
                 else if (lemma3_2partition)
                 {
                     now_branch.push_back(basic_reduce + 1);
-                    now_branch.push_back(basic_reduce + 8); //max(8, 7 + 2 * D));
+                    // now_branch.push_back(basic_reduce + 8); // max(8, 7 + 2 * D));
+                    now_branch.push_back(basic_reduce + max(8, 7 + 2 * D));
+                }
+                else if (lemma3_general)
+                {
+                    now_branch.push_back(basic_reduce + 1);
+                    now_branch.push_back(basic_reduce + max(8, 7 + 2 * D));
+                }
+                else if (lemma2_general)
+                {
+                    now_branch.push_back(basic_reduce + lemma2_i);
+                    now_branch.push_back(basic_reduce + 1 + 2 * lemma2_D);
                 }
                 else
                 {
@@ -872,17 +1070,17 @@ void preprocess(int maximum_clause_size)
     used = (new unordered_set<string>());
     ID2VAR[0] = "?";
     VAR2ID["?"] = 0;
+    ID2VAR[-1] = "?+";
+    VAR2ID["?+"] = -1;
 
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
 
     POSSIBLE_LITERALS = {
-        {1, 3, ANY},
-        {3, 1, ANY},
+        {1, 3, SINGLETON},
+        {3, 1, SINGLETON},
         {2, 2, ANY},
         {3, 2, ANY},
         {2, 3, ANY},
-        {1, 4, ANY},
-        {4, 1, ANY},
         {3, 1, SINGLETON},
         {4, 1, SINGLETON}};
 
@@ -1045,8 +1243,15 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitTy
 
                         if (m[k])
                         {
-                            if (now_cnf->clauses[k]->lits.find(&UNKNOWN_LITERAL) != now_cnf->clauses[k]->lits.end())
+                            if (now_cnf->clauses[k]->lits.find(&UNKNOWN_LITERAL) != now_cnf->clauses[k]->lits.end() || now_cnf->clauses[k]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) != now_cnf->clauses[k]->lits.end())
                             {
+
+                                if (now_cnf->clauses[k]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) != now_cnf->clauses[k]->lits.end())
+                                {
+                                    now_cnf->clauses[k]->lits.erase(&UNKNOWN_NOT_EMPTY_LITERAL);
+                                    now_cnf->clauses[k]->lits.insert(&UNKNOWN_LITERAL);
+                                }
+
                                 if (xm[xm_ind++])
                                 {
                                     now_cnf->clauses[k]->lits.insert(new_lit);
@@ -1170,4 +1375,70 @@ vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<
         ans.push_back(cnf_empty_space);
 
     return ans;
+}
+
+// Функция возвращает пару {CNF_с_пустотой, CNF_с_непустотой(?+)}
+pair<CNF *, CNF *> empty_divide(CNF *cnf)
+{
+    pair<CNF *, CNF *> best_split = {nullptr, nullptr};
+    double min_worst_factor = std::numeric_limits<double>::infinity();
+
+    vector<int> ids;
+
+    for (auto p : ID2VAR)
+    {
+        if (p.first != UNKNOWN_LITERAL.id && p.first != UNKNOWN_NOT_EMPTY_LITERAL.id)
+        {
+            ids.push_back(p.first);
+        }
+    }
+
+    for (int i = 0; i < (int)cnf->clauses.size(); ++i)
+    {
+        Clause *c = cnf->clauses[i];
+
+        // Ищем клозу, в которой есть обычный '?'
+        if (c->lits.find(&UNKNOWN_LITERAL) != c->lits.end())
+        {
+
+            // 1. Создаем ветку, где '?' означает пустоту (просто удаляем '?')
+            CNF *cnf_empty = new CNF(*cnf);
+            cnf_empty->clauses[i]->lits.erase(&UNKNOWN_LITERAL);
+
+            // 2. Создаем ветку, где '?' означает минимум 1 литерал (заменяем на '?+')
+            CNF *cnf_not_empty = new CNF(*cnf);
+            cnf_not_empty->clauses[i]->lits.erase(&UNKNOWN_LITERAL);
+            cnf_not_empty->clauses[i]->lits.insert(&UNKNOWN_NOT_EMPTY_LITERAL);
+
+            // Оцениваем обе ветки.
+            // Примечание: предполагается, что xiao_branch возвращает вектор редукций
+            // (или вызывает group_branch внутри себя для поиска лучшего ветвления).
+            double factor_empty = min(branching_factor(cnf_empty->xiao_branch(1, "x")), branching_factor(cnf_empty->branch_group(ids)));
+            double factor_not_empty = min(branching_factor(cnf_not_empty->xiao_branch(1, "x")), branching_factor(cnf_not_empty->branch_group(ids)));
+
+            // Худший случай при данном разбиении (мы вынуждены будем пойти в худшую из двух веток)
+            double worst_factor = max(factor_empty, factor_not_empty);
+
+            if (worst_factor < min_worst_factor)
+            {
+                min_worst_factor = worst_factor;
+
+                // Очищаем предыдущий лучший вариант, чтобы не было утечек памяти
+                if (best_split.first)
+                    delete best_split.first;
+                if (best_split.second)
+                    delete best_split.second;
+
+                best_split = {cnf_empty, cnf_not_empty};
+            }
+            else
+            {
+                // Если вариант не лучше, сразу удаляем созданные копии
+                delete cnf_empty;
+                delete cnf_not_empty;
+            }
+        }
+    }
+
+    return best_split;
 }

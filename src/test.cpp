@@ -531,18 +531,20 @@ void print_help_universal()
     cout << "Список команд:\n";
     cout << "   add [var_name] [i] [j] [SINGLETON | ANY]\t\tДобавить переменную (i, j), если SINGLETON, то синглтон\n";
     cout << "   addpos [var_name] [need_names] [no_names]\t\tДобавить новую переменную в первую клозу, в которой есть все\n\t\t\t\t\t\t\tпеременные из need_names и нет ни одной из no_names. Ввод разделяется строчками\n";
+    cout << "   sv [mask]                               \t\tУстановить возможные типы литералов по битовой маске длины 9\n";
     cout << "   set [branching factor]                  \t\tУстановить порог С (по умолчанию равен 1.28854 или [6 6 5 5])\n";
     cout << "   branch                                  \t\tОбычное отсеивание + с группировкой бренчингом всех вариантов ниже С\n";
     cout << "   simple_branch                           \t\tОбычное отсеивание без группировки бренчингом всех вариантов ниже С\n";
     cout << "   target [i]                              \t\tОставить в рассмотрении только [i] вариант\n";
     cout << "   head [n]                                \t\tВывести [n] первых вариантов сейчас\n";
     cout << "   print [i]                               \t\tВывести [i] вариант и разобрать по переменным\n";
+    cout << "   stats                                   \t\tВывести минимум и максимум branching factor среди оставшихся вариантов\n";
     cout << "   factor [vector]                         \t\tВывести branching factor для заданного вектора\n";
     cout << "   setposfunc [need_names] [no_names]      \t\tЗафиксировать позиционную функцию, которая будет выводиться в print\n";
+    cout << "   empty_divide [i]                        \t\tПрименить empty_divide к [i] формуле (или ко всем, если i = -1)\n";
     cout << "   help                                    \t\tВывести список команд (этот)\n";
     cout << "   exit                                    \t\tВыйти из тестирования\n\n";
 }
-
 void test_universal()
 {
     progress_counter_test = 0;
@@ -701,22 +703,36 @@ void test_universal()
         if (command == "sv")
         {
             cout << "Введите булеву маску возможных литералов для добавления в следующем порядке (0 - не добавлять / 1 - добавить):\n";
-            cout << "{1, 3, ANY}\n{3, 1, ANY}\n{2, 2, ANY}\n{3, 2, ANY}\n{2, 3, ANY}\n{1, 4, ANY}\n{4, 1, ANY}\n{3, 1, SINGLETON}\n{4, 1, SINGLETON}}\n\n";
-            string msk;
-            cin >> msk;
+            // cout << "{1, 3, ANY}\n{3, 1, ANY}\n{2, 2, ANY}\n{3, 2, ANY}\n{2, 3, ANY}\n{1, 4, ANY}\n{4, 1, ANY}\n{3, 1, SINGLETON}\n{4, 1, SINGLETON}}\n\n";
+            
 
             vector <LiteralDegType> new_pos_literals;
             
             vector <LiteralDegType> tmplte = {
-        {1, 3, ANY},
-        {3, 1, ANY},
-        {2, 2, ANY},
-        {3, 2, ANY},
-        {2, 3, ANY},
-        {1, 4, ANY},
-        {4, 1, ANY},
-        {3, 1, SINGLETON},
-        {4, 1, SINGLETON}};
+            {1, 3, SINGLETON},
+            {3, 1, SINGLETON},
+            {2, 2, ANY},
+            {3, 2, ANY},
+            {2, 3, ANY},
+            {3, 1, SINGLETON},
+            {4, 1, SINGLETON}};
+
+            for(LiteralDegType dt : tmplte)
+            {
+                cout << dt.i << " " << dt.j << " ";
+                if (dt.type == LitType::SINGLETON)
+                {
+                    cout << "SINGLETON";
+                }
+                else if (dt.type == LitType::ANY)
+                {
+                    cout << "ANY";
+                }
+                cout << endl;
+            }
+
+            string msk;
+            cin >> msk;
 
             for(int i = 0; i < msk.size(); ++i)
             {
@@ -904,16 +920,118 @@ void test_universal()
         if (command == "printworst")
         {
             double worst = -1;
+            int worst_ind = -1;
             for (int i = 0; i < cur.size(); ++i)
             {
                 vector<int> group_branch = cur.at(i)->branch_group(ids);
 
                 double gfactor = branching_factor(group_branch);
-                worst = max(worst, gfactor);
+                
+                if (gfactor > worst)
+                {
+                    worst = gfactor;
+                    worst_ind = i;
+                }
             }
 
+            cout << "Formula: " << worst_ind << '\n';
             cout << "| " << worst << "\n\n";
 
+            continue;
+        }
+
+        if (command == "stats")
+        {
+            if (cur.empty())
+            {
+                cout << "В данный момент нет вариантов для анализа.\n\n";
+                continue;
+            }
+
+            double min_bf = 1e18; // Достаточно большое число для инициализации минимума
+            double max_bf = -1.0;
+
+            // vector <int> mn_branch;
+            // vector <int> mx_branch;
+
+            for (CNF *cnf : cur)
+            {
+                vector<int> group_branch = cnf->branch_group(ids);
+                vector<int> xiao_branch = cnf->xiao_branch(1);
+
+                double gfactor = branching_factor(group_branch);
+                double xfactor = branching_factor(xiao_branch);
+
+                // Берем минимум между групповым ветвлением и ветвлением xiao
+                double current_bf = min(gfactor, xfactor);
+
+                min_bf = min(min_bf, current_bf);
+                max_bf = max(max_bf, current_bf);
+            }
+
+            cout << "Статистика по " << cur.size() << " вариантам:\n";
+            cout << "Минимальный Branching Factor:  " << min_bf << "\n";
+            cout << "Максимальный Branching Factor: " << max_bf << "\n\n";
+
+            continue;
+        }
+
+        if (command == "empty_divide")
+        {
+            int i;
+            cin >> i;
+
+            if (i == -1)
+            {
+                vector<CNF *> next_cur;
+                int success_count = 0;
+                
+                for (CNF *cnf : cur)
+                {
+                    pair<CNF *, CNF *> res = empty_divide(cnf);
+                    if (res.first != nullptr)
+                    {
+                        next_cur.push_back(res.first);
+                        next_cur.push_back(res.second);
+                        success_count++;
+                        // Утечки памяти: желательно сделать delete cnf;    
+                    }
+                    else
+                    {
+                        next_cur.push_back(cnf);
+                    }
+                }
+                swap(cur, next_cur);
+                cout << "empty_divide успешно применен к " << success_count << " формулам.\n";
+                cout << "Теперь в рассмотрении [" << cur.size() << "] вариантов.\n\n";
+            }
+            else
+            {
+                if (i >= 0 && i < (int)cur.size())
+                {
+                    pair<CNF *, CNF *> res = empty_divide(cur[i]);
+                    if (res.first != nullptr)
+                    {
+                        // Удаляем старую формулу и на её место вставляем две новые
+                        CNF* old_cnf = cur[i];
+                        cur.erase(cur.begin() + i);
+                        cur.insert(cur.begin() + i, res.second);
+                        cur.insert(cur.begin() + i, res.first);
+                        // delete old_cnf; // Не забывайте про освобождение памяти
+
+                        cout << "empty_divide успешно применен к формуле " << i << ".\n";
+                        cout << "Теперь в рассмотрении [" << cur.size() << "] вариантов.\n\n";
+                    }
+                    else
+                    {
+                        cout << "В формуле " << i << " не найдено литералов '?' для разбиения.\n\n";
+                    }
+                }
+                else
+                {
+                    cout << "Неверный индекс формулы.\n\n";
+                }
+            }
             continue;
         }
 
@@ -946,6 +1064,17 @@ void test_universal()
 
             cur = {cur.at(i)};
             cout << "\n\n";
+            continue;
+        }
+
+        if (command == "drop")
+        {
+            int i;
+            cin >> i;
+
+            cur.erase(cur.begin() + i);
+            
+            cout << "Done.\n\n";
             continue;
         }
 

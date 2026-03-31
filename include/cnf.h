@@ -12,7 +12,8 @@ extern map<int, string> ID2VAR;
 extern map<string, int> VAR2ID;
 extern int ID_COUNTER;
 
-struct{
+struct
+{
     int MAXIMUM_CLAUSE_SIZE;
 } MaxSATSettings;
 
@@ -29,6 +30,7 @@ public:
 };
 
 extern Literal UNKNOWN_LITERAL;
+extern Literal UNKNOWN_NOT_EMPTY_LITERAL; // Новый литерал ?+
 
 struct LiteralPtrLess
 {
@@ -63,21 +65,21 @@ enum LitType
     ANY
 };
 
-struct LiteralDegType{
+struct LiteralDegType
+{
     int i;
     int j;
     LitType type;
 };
 
-extern vector <LiteralDegType> POSSIBLE_LITERALS; 
-
+extern vector<LiteralDegType> POSSIBLE_LITERALS;
 
 class CNF
 {
 
 public:
     CNF() {}
-    
+
     CNF(CNF &cnf)
     {
         clauses.resize(cnf.clauses.size());
@@ -87,21 +89,29 @@ public:
         }
     }
 
+    // ~CNF()
+    // {
+    //     for (auto c : clauses)
+    //     {
+    //         delete c;
+    //     }
+    // }
+
     vector<int> branch(vector<int> ids);
 
     vector<int> branch_group(vector<int> ids, int max_partitions = -1);
 
-    vector<int> xiao_branch(int depth);
+    vector<int> xiao_branch(int depth, string first_var = "x");
 
     vector<Clause *> clauses;
-
 };
 
 // int calculate_F(CNF &cnf, int var_id);
 
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type); //,const std::function<bool(int, bool, bool, Clause*)>& condition_func = [](int, bool, bool, Clause*){ return true; });
-vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector <LiteralDegType> variants = POSSIBLE_LITERALS);
+vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector<LiteralDegType> variants = POSSIBLE_LITERALS);
 
+pair<CNF*, CNF*> empty_divide(CNF* cnf);
 
 bool is_A_subset_of_B(int A, int B);
 double branching_factor(const vector<int> &a, double tol = 1e-12);
