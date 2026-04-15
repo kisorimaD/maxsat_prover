@@ -12,6 +12,8 @@ extern map<int, string> ID2VAR;
 extern map<string, int> VAR2ID;
 extern int ID_COUNTER;
 
+extern double C; // Временная константа, решения ниже которой мы отбрасываем
+
 struct
 {
     int MAXIMUM_CLAUSE_SIZE;

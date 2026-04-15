@@ -4,7 +4,7 @@
 #include <sstream>
 
 int epoch_cnt = 0;
-double C = -1;
+//double C = -1;
 
 double max_better = -1;
 vector<int> max_better_branch;
