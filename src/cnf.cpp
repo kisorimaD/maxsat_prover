@@ -1,14 +1,14 @@
 #include "cnf.h"
-#include <iostream>
 #include <algorithm>
-#include <set>
 #include <assert.h>
-#include <math.h>
-#include <string>
-#include <functional>
-#include <unordered_set>
 #include <fstream>
+#include <functional>
+#include <iostream>
 #include <limits>
+#include <math.h>
+#include <set>
+#include <string>
+#include <unordered_set>
 
 // #include <fstream>
 
@@ -24,10 +24,7 @@ Literal UNKNOWN_NOT_EMPTY_LITERAL = Literal(1, false);
 
 vector<LiteralDegType> POSSIBLE_LITERALS;
 
-Literal::Literal()
-{
-    id = 0;
-};
+Literal::Literal() { id = 0; };
 
 Literal::Literal(string var, bool is_inv)
 {
@@ -54,10 +51,7 @@ Literal::Literal(int _id, bool is_inv)
     inv = is_inv;
 }
 
-Literal Literal::neg() const
-{
-    return Literal(id, !inv);
-}
+Literal Literal::neg() const { return Literal(id, !inv); }
 
 bool is_A_subset_of_B(int A, int B)
 {
@@ -66,9 +60,10 @@ bool is_A_subset_of_B(int A, int B)
     return A_without_B == 0;
 }
 
-void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask, vector<int> &reduced_clauses, vector<int> &no_clauses_mask)
+void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask,
+                        vector<int> &reduced_clauses,
+                        vector<int> &no_clauses_mask)
 {
-
     int k = ids.size();
 
     map<int, int> id2ind;
@@ -84,7 +79,8 @@ void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask, v
         int no_mask = 0;
 
         // for (Clause *c : clauses)
-        for (int clause_ind = 0; clause_ind < (int)cnf.clauses.size(); ++clause_ind)
+        for (int clause_ind = 0; clause_ind < (int)cnf.clauses.size();
+             ++clause_ind)
         {
             Clause *c = cnf.clauses[clause_ind];
 
@@ -151,13 +147,15 @@ vector<int> CNF::branch(vector<int> ids)
     vector<int> reduced_clauses(1 << k);
     vector<int> no_clauses_mask(1 << k);
 
-    calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
+    calculate_variants(*this, ids, clauses_mask, reduced_clauses,
+                       no_clauses_mask);
 
     for (int mask = 0; mask < (1 << k); ++mask)
     {
         bool is_subset = false;
 
-        int max_val = (*this).clauses.size() - count_set_bits(no_clauses_mask[mask]); // YES + "?"
+        int max_val = (*this).clauses.size() -
+                      count_set_bits(no_clauses_mask[mask]); // YES + "?"
 
         for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
         {
@@ -174,7 +172,9 @@ vector<int> CNF::branch(vector<int> ids)
 
             if (count_set_bits(clauses_mask[other_mask]) >= max_val)
             {
-                if ((*this).clauses.size() - no_clauses_mask[other_mask] <= clauses_mask[mask] && other_mask > mask)
+                if ((*this).clauses.size() - no_clauses_mask[other_mask] <=
+                        clauses_mask[mask] &&
+                    other_mask > mask)
                 {
                     continue;
                 }
@@ -250,7 +250,8 @@ bool get_next_partition(std::vector<int> &c, int k)
 vector<string> valid_3_partitions;
 int partition_ind;
 
-bool get_next_3_partition_fast(std::vector<int> &c, vector<bool> &mask_of_reduced_clauses)
+bool get_next_3_partition_fast(std::vector<int> &c,
+                               vector<bool> &mask_of_reduced_clauses)
 {
     if (partition_ind == valid_3_partitions.size())
         return false;
@@ -273,7 +274,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
     int k = ids.size();
 
-    bool is_3_case = false; // Случай, когда формулу группируют по 3 переменным. Для него предподсчитаны все разбиения
+    bool is_3_case = false; // Случай, когда формулу группируют по 3 переменным.
+                            // Для него предподсчитаны все разбиения
     if (k == 3)
     {
         is_3_case = true;
@@ -284,13 +286,15 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
     {
         for (Literal *l : cl->lits)
         {
-            if (l->id != UNKNOWN_LITERAL.id && l->id != UNKNOWN_NOT_EMPTY_LITERAL.id)
+            if (l->id != UNKNOWN_LITERAL.id &&
+                l->id != UNKNOWN_NOT_EMPTY_LITERAL.id)
             {
                 using_ids.insert(l->id);
             }
         }
     }
-    int kreal = using_ids.size(); // Реальное количество литералов, которое мы используем
+    int kreal =
+        using_ids.size(); // Реальное количество литералов, которое мы используем
 
     vector<int> branch;
 
@@ -299,10 +303,13 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
     vector<int> reduced_clauses(1 << k);
     vector<int> no_clauses_mask(1 << k);
 
-    calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
+    calculate_variants(*this, ids, clauses_mask, reduced_clauses,
+                       no_clauses_mask);
 
-    vector<bool> mask_of_reduced_subsets(1 << k, true); // Маска подстановок, которые удалили
-    vector<int> rclauses;                               // Маски выполненных клоз (YES) для каждой оставшейся подстановки [rcnt]
+    vector<bool> mask_of_reduced_subsets(
+        1 << k, true);    // Маска подстановок, которые удалили
+    vector<int> rclauses; // Маски выполненных клоз (YES) для каждой оставшейся
+                          // подстановки [rcnt]
     vector<int> no_clauses;
     vector<int> masks; // Маска подстановки для оставшихся подстановок
 
@@ -310,7 +317,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
     {
         bool is_subset = false;
 
-        int max_val = (*this).clauses.size() - count_set_bits(no_clauses_mask[mask]); // YES + "?"
+        int max_val = (*this).clauses.size() -
+                      count_set_bits(no_clauses_mask[mask]); // YES + "?"
 
         for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
         {
@@ -327,7 +335,10 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
             if (count_set_bits(clauses_mask[other_mask]) >= max_val)
             {
-                if (((*this).clauses.size() - count_set_bits(no_clauses_mask[other_mask]) <= count_set_bits(clauses_mask[mask])) && (other_mask > mask))
+                if (((*this).clauses.size() -
+                         count_set_bits(no_clauses_mask[other_mask]) <=
+                     count_set_bits(clauses_mask[mask])) &&
+                    (other_mask > mask))
                 {
                     continue;
                 }
@@ -352,7 +363,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
         }
     }
 
-    int rcnt = rclauses.size(); // Количество оставшихся подстановок, после удаления тех, которые полностью входят в другие
+    int rcnt = rclauses.size(); // Количество оставшихся подстановок, после
+                                // удаления тех, которые полностью входят в другие
 
     double mn_factor = 100000;
     vector<int> mn_branch;
@@ -438,45 +450,43 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
             if (!is_3_case) // В случае 3 переменных всё предподсчитано и проверено
             {
-                set<int> masks_set;
+                vector<int> group_masks;
                 for (int i = 0; i < rcnt; ++i)
                 {
                     if (cs[i] == c)
                     {
-                        masks_set.insert(masks[i]);
+                        group_masks.push_back(masks[i]);
                     }
                 }
 
-                for (int i = 0; i < rcnt; ++i)
+                int group_size = group_masks.size();
+
+                // Быстрая проверка (Fast-fail): 
+                // Размер любого аффинного подпространства в GF(2) обязан быть степенью двойки (1, 2, 4, 8...).
+                // Если это не так (например, 3 элемента), это точно не валидная группа.
+                if (group_size > 0 && (group_size & (group_size - 1)) != 0)
                 {
-                    if (cs[i] != c)
-                        continue;
+                    cant_merge = true;
+                }
+                else if (group_size >= 4) // Для 1 и 2 элементов замкнутость выполняется тривиально
+                {
+                    unordered_set<int> masks_set(group_masks.begin(), group_masks.end());
 
-                    for (int j = i + 1; j < rcnt; ++j)
+                    for (int i = 0; i < group_size && !cant_merge; ++i)
                     {
-                        if (cs[j] != c)
-                            continue;
-
-                        for (int z = j + 1; z < rcnt; ++z)
+                        for (int j = i + 1; j < group_size && !cant_merge; ++j)
                         {
-                            if (cs[z] != c)
-                                continue;
-
-                            int sup_mask = masks[i] ^ masks[j] ^ masks[z];
-
-                            if (masks_set.find(sup_mask) == masks_set.end())
+                            for (int z = j + 1; z < group_size && !cant_merge; ++z)
                             {
-                                cant_merge = true;
-                                break;
+                                int sup_mask = group_masks[i] ^ group_masks[j] ^ group_masks[z];
+
+                                if (masks_set.find(sup_mask) == masks_set.end())
+                                {
+                                    cant_merge = true;
+                                }
                             }
                         }
-
-                        if (cant_merge)
-                            break;
                     }
-
-                    if (cant_merge)
-                        break;
                 }
 
                 if (cant_merge)
@@ -487,7 +497,9 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             }
 
             bool cross_reduce = false;
-            int cross_size = -1; // Количество невыполненных клоз в остальных кроме cross подстановках (не считая клоз, которые полностью не выполнены)
+            int cross_size =
+                -1; // Количество невыполненных клоз в остальных кроме cross
+                    // подстановках (не считая клоз, которые полностью не выполнены)
 
             if (partition_size >= 2)
             {
@@ -518,7 +530,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                     {
                         if (((no_clauses[i] >> lastz) & 1) == 1)
                         {
-                            // На месте cross стоит не ?, а NO. В таком случае мы не можем применить cross_reduce
+                            // На месте cross стоит не ?, а NO. В таком случае мы не можем
+                            // применить cross_reduce
                             valid_cross = false;
                             continue;
                         }
@@ -551,21 +564,24 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                 if (found_cross)
                 {
-                    // Если можно выполнить cross_reduce, то все остальные подстановки - одинаковые
+                    // Если можно выполнить cross_reduce, то все остальные подстановки -
+                    // одинаковые
                     cross_reduce = true;
 
                     for (int cl = 0; cl < (int)this->clauses.size(); ++cl) // Перебираем все клозы
                     {
                         char clause_result = '#'; // не инициализированное значение клозы
 
-                        for (int i = 0; i < rcnt; ++i) // Пробегаем по всем подстановкам из нашего разбиения без cross_row
+                        for (int i = 0; i < rcnt; ++i) // Пробегаем по всем подстановкам из
+                                                       // нашего разбиения без cross_row
                         {
                             if (cs[i] != c || i == cross_row)
                             {
                                 continue;
                             }
 
-                            if (((rclauses[cross_row] >> cl) & 1) != ((rclauses[i] >> cl) & 1))
+                            if (((rclauses[cross_row] >> cl) & 1) !=
+                                ((rclauses[i] >> cl) & 1))
                             {
                                 cross_size++;
                             }
@@ -595,21 +611,19 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             bool var2reduce = false;
             int D = 0;
 
-            // bool lemma3_general = false; // Лемма 3 для группировки не на 2 подстановки
-
-            // bool lemma2_general = false;
-            // int lemma2_i = 0;
-            // int lemma2_D = 0;
 
             vector<int> best_extra_branch;
             double best_extra_factor = C;
 
             if (partition_size == 2)
             {
-                // Пытаемся найти 2- или 3- переменную (2- переменная даст +1, 3- переменная +(1, 8) по Лемме 3)
-                // Перебираемся по выполненным клозам - в новой формуле единственная переменная будет стоять там, где у двух подстановок различаются значения в клозе
+                // Пытаемся найти 2- или 3- переменную (2- переменная даст +1, 3-
+                // переменная +(1, 8) по Лемме 3) Перебираемся по выполненным клозам - в
+                // новой формуле единственная переменная будет стоять там, где у двух
+                // подстановок различаются значения в клозе
 
-                int clause_result_xor_mask = 0; // XOR Маска выполненных клоз для данной группы
+                int clause_result_xor_mask =
+                    0; // XOR Маска выполненных клоз для данной группы
 
                 for (int i = 0; i < rcnt; ++i)
                 {
@@ -618,15 +632,20 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                     clause_result_xor_mask ^= rclauses[i];
                 }
-                // Единица будет стоять только на тех местах, где значение отличается, это нам и нужно
+                // Единица будет стоять только на тех местах, где значение отличается,
+                // это нам и нужно
 
-                int var_count = count_set_bits(clause_result_xor_mask); // Вхождение единственной переменной (так как группировка по двум подстановкам она будет единственной)
+                int var_count = count_set_bits(
+                    clause_result_xor_mask); // Вхождение единственной переменной (так
+                                             // как группировка по двум подстановкам она
+                                             // будет единственной)
 
                 if (var_count == 3)
                 {
                     lemma3_2partition = true;
-                    // Вообще по Лемме 3 можно побренчить на {1, t}, t:= max(8, 7 + 2|D|), где D - это клоза с ¬x если x - (2, 1)
-                    // Давайте посмотрим сколько переменных мы точно знаем из нужной клозы
+                    // Вообще по Лемме 3 можно побренчить на {1, t}, t:= max(8, 7 + 2|D|),
+                    // где D - это клоза с ¬x если x - (2, 1) Давайте посмотрим сколько
+                    // переменных мы точно знаем из нужной клозы
 
                     int first_cnt = 0, second_cnt = 0;
                     int first_last_clause = -1, second_last_clause = -1;
@@ -658,46 +677,34 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                     assert(first_cnt == 1 || second_cnt == 1);
 
-                    // Если мы сужаемся на partition_size == 2, то у нас остается всего одна переменная
+                    // Если мы сужаемся на partition_size == 2, то у нас остается всего
+                    // одна переменная
 
                     if (first_cnt == 1)
                     {
-                        D = ((this->clauses[first_last_clause]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) != this->clauses[first_last_clause]->lits.end()) ? 1 : 0);
+                        D = ((this->clauses[first_last_clause]->lits.find(
+                                  &UNKNOWN_NOT_EMPTY_LITERAL) !=
+                              this->clauses[first_last_clause]->lits.end())
+                                 ? 1
+                                 : 0);
                     }
                     else if (second_cnt == 1)
                     {
-                        D = ((this->clauses[second_last_clause]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) != this->clauses[second_last_clause]->lits.end()) ? 1 : 0);
+                        D = ((this->clauses[second_last_clause]->lits.find(
+                                  &UNKNOWN_NOT_EMPTY_LITERAL) !=
+                              this->clauses[second_last_clause]->lits.end())
+                                 ? 1
+                                 : 0);
                     }
-                    // if (first_cnt == 1)
-                    // {
-                    //     D = (this->clauses[first_last_clause]->lits.size());
-
-                    //     if (this->clauses[first_last_clause]->lits.find(&UNKNOWN_LITERAL) != this->clauses[first_last_clause]->lits.end())
-                    //     {
-                    //         D--;
-
-                    //         // if (D == 0)
-                    //         //     D = 1;
-                    //     }
-                    // }
-                    // else if (second_cnt == 1)
-                    // {
-                    //     D = (this->clauses[second_last_clause]->lits.size());
-
-                    //     if (this->clauses[second_last_clause]->lits.find(&UNKNOWN_LITERAL) != this->clauses[second_last_clause]->lits.end())
-                    //     {
-                    //         D--;
-
-                    //         // if (D == 0)
-                    //         //     D = 1;
-                    //     }
-                    // }
                 }
                 else if (var_count == 2)
                 {
                     var2reduce = true;
-                    // Заметим, что в таком случае эти 2 клозы не могут быть одинаковыми, т.к. иначе одну из них бы удалили, так как она входит в другую (с YES)
-                    // То есть если при замене мы получаем две клозы с x мы понимаем, что одна из подстановок была изначально хуже другой и не должна была существовать
+                    // Заметим, что в таком случае эти 2 клозы не могут быть одинаковыми,
+                    // т.к. иначе одну из них бы удалили, так как она входит в другую (с
+                    // YES) То есть если при замене мы получаем две клозы с x мы понимаем,
+                    // что одна из подстановок была изначально хуже другой и не должна
+                    // была существовать
                 }
             }
 
@@ -719,7 +726,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                         for (Literal *l : c_ptr->lits)
                         {
-                            if (l->id != UNKNOWN_LITERAL.id && l->id != UNKNOWN_NOT_EMPTY_LITERAL.id)
+                            if (l->id != UNKNOWN_LITERAL.id &&
+                                l->id != UNKNOWN_NOT_EMPTY_LITERAL.id)
                             {
                                 if (l->inv)
                                     var_counts[l->id].second++;
@@ -735,7 +743,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                 {
                     int pos = counts.first;
                     int neg = counts.second;
-                    if (pos + neg == 3 && ((pos == 2 && neg == 1) || (pos == 1 && neg == 2)))
+                    if (pos + neg == 3 &&
+                        ((pos == 2 && neg == 1) || (pos == 1 && neg == 2)))
                     {
                         lemma3_singletons_cnt++;
                     }
@@ -747,7 +756,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                     int neg = counts.second;
 
                     // ---------- Лемма 3 ----------
-                    if (pos + neg == 3 && ((pos == 2 && neg == 1) || (pos == 1 && neg == 2)))
+                    if (pos + neg == 3 &&
+                        ((pos == 2 && neg == 1) || (pos == 1 && neg == 2)))
                     {
                         bool need_inv = (pos == 1 ? false : true);
                         int local_D = 0;
@@ -755,7 +765,8 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
 
                         for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
                         {
-                            if (((gclauses >> cl) & 1) == 0 && ((gnoclauses >> cl) & 1) == 0)
+                            if (((gclauses >> cl) & 1) == 0 &&
+                                ((gnoclauses >> cl) & 1) == 0)
                             {
                                 Clause *c_ptr = this->clauses[cl];
                                 if (c_ptr->empty)
@@ -817,19 +828,21 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                                 best_extra_branch = cand;
                             }
                         }
-
                     }
 
                     // ---------- Лемма 2 ----------
                     if (pos > 0 && neg > 0 && (pos == 1 || neg == 1))
                     {
-                        bool minority_inv = (neg == 1); // unique opposite clause contains ~x if neg==1, else x
+                        bool minority_inv =
+                            (neg ==
+                             1); // unique opposite clause contains ~x if neg==1, else x
                         int local_i = max(pos, neg);
                         int local_D = -1;
 
                         for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
                         {
-                            if (((gclauses >> cl) & 1) == 0 && ((gnoclauses >> cl) & 1) == 0)
+                            if (((gclauses >> cl) & 1) == 0 &&
+                                ((gnoclauses >> cl) & 1) == 0)
                             {
                                 Clause *c_ptr = this->clauses[cl];
                                 if (c_ptr->empty)
@@ -890,8 +903,10 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
                     got_zero = true;
                     break;
                 }
-                // now_branch.push_back(count_set_bits(gclauses) + count_set_bits(gnoclauses) + abc_reduced);
-                int basic_reduce = count_set_bits(gclauses) + count_set_bits(gnoclauses);
+                // now_branch.push_back(count_set_bits(gclauses) +
+                // count_set_bits(gnoclauses) + abc_reduced);
+                int basic_reduce =
+                    count_set_bits(gclauses) + count_set_bits(gnoclauses);
                 // now_branch.push_back(basic_reduce + ());
 
                 // double best_branch_factor = branching_factor();
@@ -946,12 +961,11 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
             mn_partition = cs;
         }
 
-    } while (is_3_case ? get_next_3_partition_fast(cs, mask_of_reduced_subsets) : get_next_partition(cs, max_partitions));
+    } while (is_3_case ? get_next_3_partition_fast(cs, mask_of_reduced_subsets)
+                       : get_next_partition(cs, max_partitions));
 
     return mn_branch;
 }
-
-// vector<int> CNF::
 
 double f_value(double x, const vector<int> &a)
 { // compute sum_i x^{-a_i} - 1
@@ -999,7 +1013,8 @@ double branching_factor(const vector<int> &a, double tol)
                 v_str += (to_string(n) + " ");
             }
             v_str += ")";
-            throw runtime_error("Cannot bracket root: high grew too large. Branch: " + v_str);
+            throw runtime_error("Cannot bracket root: high grew too large. Branch: " +
+                                v_str);
         }
     }
 
@@ -1007,7 +1022,8 @@ double branching_factor(const vector<int> &a, double tol)
     double fh = f(high);
     if (!(fl > 0.0 && fh < 0.0))
     {
-        // numerical safeguard: if fl already <= 0 (rare), move low slightly toward 1
+        // numerical safeguard: if fl already <= 0 (rare), move low slightly toward
+        // 1
         if (fl <= 0.0)
             low = 1.0 + 1e-16, fl = f(low);
         if (!(fl > 0.0 && fh < 0.0))
@@ -1028,7 +1044,9 @@ double branching_factor(const vector<int> &a, double tol)
                     v_str += (to_string(n) + " ");
                 }
                 v_str += ")";
-                throw runtime_error("Failed to bracket root (fl, fh) = (" + to_string(fl) + ", " + to_string(fh) + ") " + v_str);
+                throw runtime_error("Failed to bracket root (fl, fh) = (" +
+                                    to_string(fl) + ", " + to_string(fh) + ") " +
+                                    v_str);
             }
         }
     }
@@ -1101,14 +1119,7 @@ void preprocess(int maximum_clause_size)
 
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
 
-    POSSIBLE_LITERALS = {
-        {1, 3, SINGLETON},
-        {3, 1, SINGLETON},
-        {2, 2, ANY},
-        {3, 2, ANY},
-        {2, 3, ANY},
-        {3, 1, SINGLETON},
-        {4, 1, SINGLETON}};
+    POSSIBLE_LITERALS = {{1, 3, SINGLETON}, {3, 1, SINGLETON}, {2, 2, ANY}, {3, 2, ANY}, {2, 3, ANY}, {1, 4, SINGLETON}, {4, 1, SINGLETON}};
 
     ifstream infile("groups3.txt");
     if (!infile.is_open())
@@ -1186,7 +1197,8 @@ string cnf_to_max_string(CNF *cnf)
             vector<string> lits_str;
             for (auto lit : clause->lits)
             {
-                lits_str.push_back((lit->inv ? "~" : "=") + to_string(lit->id == 0 ? 0 : perm[lit->id - 1]));
+                lits_str.push_back((lit->inv ? "~" : "=") +
+                                   to_string(lit->id == 0 ? 0 : perm[lit->id - 1]));
             }
             sort(lits_str.begin(), lits_str.end());
             string clause_str = "(" + join(lits_str, "∨") + ")";
@@ -1202,16 +1214,14 @@ string cnf_to_max_string(CNF *cnf)
 
     } while (next_permutation(perm.begin(), perm.end()));
 
-    // cout << "---------\n";
-    // print_cnf(*cnf);
-    // cout << max_str << endl;
-
     return max_str;
 }
 
 // set<string> used;
 
-vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitType type, int pos = -1, bool only_pos = false)
+vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
+                                    LitType type, int pos = -1,
+                                    bool only_pos = false)
 {
     // a + b = s
     // В 0 <= a <= i клозах литерал встречается с x
@@ -1269,10 +1279,15 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitTy
 
                         if (m[k])
                         {
-                            if (now_cnf->clauses[k]->lits.find(&UNKNOWN_LITERAL) != now_cnf->clauses[k]->lits.end() || now_cnf->clauses[k]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) != now_cnf->clauses[k]->lits.end())
+                            if (now_cnf->clauses[k]->lits.find(&UNKNOWN_LITERAL) !=
+                                    now_cnf->clauses[k]->lits.end() ||
+                                now_cnf->clauses[k]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) !=
+                                    now_cnf->clauses[k]->lits.end())
                             {
 
-                                if (now_cnf->clauses[k]->lits.find(&UNKNOWN_NOT_EMPTY_LITERAL) != now_cnf->clauses[k]->lits.end())
+                                if (now_cnf->clauses[k]->lits.find(
+                                        &UNKNOWN_NOT_EMPTY_LITERAL) !=
+                                    now_cnf->clauses[k]->lits.end())
                                 {
                                     now_cnf->clauses[k]->lits.erase(&UNKNOWN_NOT_EMPTY_LITERAL);
                                     now_cnf->clauses[k]->lits.insert(&UNKNOWN_LITERAL);
@@ -1318,7 +1333,8 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitTy
                         }
                         else
                         {
-                            vector<Literal *> new_clause_list = {new_lit_neg, &UNKNOWN_LITERAL};
+                            vector<Literal *> new_clause_list = {new_lit_neg,
+                                                                 &UNKNOWN_LITERAL};
                             Clause *new_clause_x = new Clause(new_clause_list);
                             now_cnf->clauses.push_back(new_clause_x);
                         }
@@ -1330,7 +1346,9 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j, LitTy
 
                         for (Clause *c : now_cnf->clauses)
                         {
-                            if (c->lits.size() > MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 || (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 && c->lits.find(&UNKNOWN_LITERAL) == c->lits.end()))
+                            if (c->lits.size() > MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 ||
+                                (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 &&
+                                 c->lits.find(&UNKNOWN_LITERAL) == c->lits.end()))
                             {
                                 too_many_lits = true;
                                 break;
@@ -1373,7 +1391,10 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
     return add_new_var_universal(cnf, v_name, i, j, type);
 }
 
-vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector<LiteralDegType> variants)
+vector<CNF *>
+add_new_var_in_place(CNF *cnf, string v_name,
+                     const std::function<int(CNF *)> &need_index_func,
+                     vector<LiteralDegType> variants)
 {
     int pos = need_index_func(cnf);
 
@@ -1385,14 +1406,17 @@ vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<
 
     for (LiteralDegType l : variants)
     {
-        auto new_vars = add_new_var_universal(cnf, v_name, l.i, l.j, l.type, pos, true);
+        auto new_vars =
+            add_new_var_universal(cnf, v_name, l.i, l.j, l.type, pos, true);
         ans.resize(ans.size() + new_vars.size());
         copy(new_vars.begin(), new_vars.end(), ans.rbegin());
     }
 
     CNF *cnf_empty_space = new CNF(*cnf);
 
-    if (pos < cnf_empty_space->clauses.size() && cnf_empty_space->clauses[pos]->lits.find(&UNKNOWN_LITERAL) != cnf_empty_space->clauses[pos]->lits.end())
+    if (pos < cnf_empty_space->clauses.size() &&
+        cnf_empty_space->clauses[pos]->lits.find(&UNKNOWN_LITERAL) !=
+            cnf_empty_space->clauses[pos]->lits.end())
     {
         cnf_empty_space->clauses[pos]->lits.erase(&UNKNOWN_LITERAL);
     }
@@ -1413,7 +1437,8 @@ pair<CNF *, CNF *> empty_divide(CNF *cnf)
 
     for (auto p : ID2VAR)
     {
-        if (p.first != UNKNOWN_LITERAL.id && p.first != UNKNOWN_NOT_EMPTY_LITERAL.id)
+        if (p.first != UNKNOWN_LITERAL.id &&
+            p.first != UNKNOWN_NOT_EMPTY_LITERAL.id)
         {
             ids.push_back(p.first);
         }
@@ -1439,10 +1464,15 @@ pair<CNF *, CNF *> empty_divide(CNF *cnf)
             // Оцениваем обе ветки.
             // Примечание: предполагается, что xiao_branch возвращает вектор редукций
             // (или вызывает group_branch внутри себя для поиска лучшего ветвления).
-            double factor_empty = min(branching_factor(cnf_empty->xiao_branch(1, "x")), branching_factor(cnf_empty->branch_group(ids)));
-            double factor_not_empty = min(branching_factor(cnf_not_empty->xiao_branch(1, "x")), branching_factor(cnf_not_empty->branch_group(ids)));
+            double factor_empty =
+                min(branching_factor(cnf_empty->xiao_branch(1, "x")),
+                    branching_factor(cnf_empty->branch_group(ids)));
+            double factor_not_empty =
+                min(branching_factor(cnf_not_empty->xiao_branch(1, "x")),
+                    branching_factor(cnf_not_empty->branch_group(ids)));
 
-            // Худший случай при данном разбиении (мы вынуждены будем пойти в худшую из двух веток)
+            // Худший случай при данном разбиении (мы вынуждены будем пойти в худшую
+            // из двух веток)
             double worst_factor = max(factor_empty, factor_not_empty);
 
             if (worst_factor < min_worst_factor)

@@ -714,7 +714,7 @@ void test_universal()
             {2, 2, ANY},
             {3, 2, ANY},
             {2, 3, ANY},
-            {3, 1, SINGLETON},
+            {1, 4, SINGLETON},
             {4, 1, SINGLETON}};
 
             for(LiteralDegType dt : tmplte)

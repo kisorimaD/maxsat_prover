@@ -401,14 +401,6 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
             }
         }
 
-        // for (int val : child_res)
-        // {
-        //     current_branching.push_back(reduced_cnt + val);
-        // }
-        // for (auto c : new_cnf->clauses)
-        //     delete c;
-        // delete new_cnf;
-
         // Ветвь 2: x = 0 (False)
 
         auto [reduced_cnt0, new_cnf0] = apply_xiao_assignment(this, var_id, false);
@@ -426,14 +418,6 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
                 child0_res = {3, 3}; // Подмена на бесплатное ветвление (3,3)
             }
         }
-
-        // for (int val : child_res)
-        // {
-        //     current_branching.push_back(reduced_cnt + val);
-        // }
-        // for (auto c : new_cnf->clauses)
-        //     delete c;
-        // delete new_cnf;
 
         double current_tau = 100;
 
