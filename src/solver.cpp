@@ -22,83 +22,83 @@ void printProgress(double percentage)
 
 void branch_epoch(vector<CNF *> &variants, vector<int> &ids)
 {
-    cout << "Эпоха " << epoch_cnt++ << endl;
+    // cout << "Эпоха " << epoch_cnt++ << endl;
 
-    cout << "Начинается примитивная фильтрация\n";
-    vector<CNF *> filtered_variants;
+    // cout << "Начинается примитивная фильтрация\n";
+    // vector<CNF *> filtered_variants;
 
-    for (CNF *cnf : variants)
-    {
-        vector<int> naive_branch = cnf->branch(ids);
-        double bf = branching_factor(naive_branch);
+    // for (CNF *cnf : variants)
+    // {
+    //     vector<int> naive_branch = cnf->branch(ids);
+    //     double bf = branching_factor(naive_branch);
 
-        if (bf < C)
-        {
-            if (bf > max_better)
-            {
-                max_better = bf;
-                max_better_branch = naive_branch;
-                best_cnf = cnf;
-            }
-        }
-        else
-        {
-            filtered_variants.push_back(cnf);
-        }
-    }
+    //     if (bf < C)
+    //     {
+    //         if (bf > max_better)
+    //         {
+    //             max_better = bf;
+    //             max_better_branch = naive_branch;
+    //             best_cnf = cnf;
+    //         }
+    //     }
+    //     else
+    //     {
+    //         filtered_variants.push_back(cnf);
+    //     }
+    // }
 
-    cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
+    // cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
 
-    cout << "Осталось [" << filtered_variants.size() << "]. Начинается фильтрация с группировкой\n";
+    // cout << "Осталось [" << filtered_variants.size() << "]. Начинается фильтрация с группировкой\n";
 
-    bool need_pb = false;
-    if (filtered_variants.size() > 300)
-    {
-        need_pb = true;
-        cout << "\nWARNING! Слишком большой размер оставшегося массива, бренчинг с группировкой может работать очень медленно.\n\n";
-    }
+    // bool need_pb = false;
+    // if (filtered_variants.size() > 300)
+    // {
+    //     need_pb = true;
+    //     cout << "\nWARNING! Слишком большой размер оставшегося массива, бренчинг с группировкой может работать очень медленно.\n\n";
+    // }
 
-    swap(variants, filtered_variants);
-    filtered_variants.clear();
+    // swap(variants, filtered_variants);
+    // filtered_variants.clear();
 
-    if (need_pb)
-        progress_counter_test = 0;
+    // if (need_pb)
+    //     progress_counter_test = 0;
 
-    int vsize = variants.size();
+    // int vsize = variants.size();
     
-    for (CNF *cnf : variants)
-    {
-        vector<int> group_branch = cnf->branch_group(ids);
-        double bf = branching_factor(group_branch);
+    // for (CNF *cnf : variants)
+    // {
+    //     vector<int> group_branch = cnf->branch_group(ids);
+    //     double bf = branching_factor(group_branch);
 
-        if (bf < C)
-        {
-            if (bf > max_better)
-            {
-                max_better = bf;
-                max_better_branch = group_branch;
-                best_cnf = cnf;
-            }
-        }
-        else
-        {
-            filtered_variants.push_back(cnf);
-        }
+    //     if (bf < C)
+    //     {
+    //         if (bf > max_better)
+    //         {
+    //             max_better = bf;
+    //             max_better_branch = group_branch;
+    //             best_cnf = cnf;
+    //         }
+    //     }
+    //     else
+    //     {
+    //         filtered_variants.push_back(cnf);
+    //     }
 
-        if (need_pb)
-            progress_counter_test++;
+    //     if (need_pb)
+    //         progress_counter_test++;
 
-        if (need_pb && progress_counter_test % 50 == 0)
-        {
-            printProgress((double)progress_counter_test / vsize);
-        }
-    }
+    //     if (need_pb && progress_counter_test % 50 == 0)
+    //     {
+    //         printProgress((double)progress_counter_test / vsize);
+    //     }
+    // }
 
-    cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
+    // cout << "Было отфильтровано [" << variants.size() - filtered_variants.size() << "] вариантов. Это [" << (double)(variants.size() - filtered_variants.size()) / variants.size() * 100 << "%]\n";
 
-    cout << "Осталось [" << filtered_variants.size() << "]\n\n";
+    // cout << "Осталось [" << filtered_variants.size() << "]\n\n";
 
-    swap(variants, filtered_variants);
+    // swap(variants, filtered_variants);
 }
 
 void solve()

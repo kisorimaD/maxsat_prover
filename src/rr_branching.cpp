@@ -193,10 +193,25 @@ bool is_good_variable(CNF *cnf, int var_id, const VarStats &s)
     return is_good;
 }
 
-vector<int> CNF::xiao_branch(int depth, std::string first_var)
+
+// std::vector<std::vector<int>> CNF::get_snapshot() {
+//     std::vector<std::vector<int>> snap;
+//     for (Clause* c : clauses) {
+//         std::vector<int> cl_snap;
+//         for (Literal* l : c->lits) {
+//             if (is_any_unknown_literal(l)) cl_snap.push_back(l->id);
+//             else cl_snap.push_back((l->inv ? -1 : 1) * l->id);
+//         }
+//         snap.push_back(cl_snap);
+//     }
+//     return snap;
+// }
+
+ProofNode CNF::xiao_branch(int depth, std::string first_var)
 {
-    double granted = 100;
-    vector<int> granted_branch = {0};
+    double granted = 100.0;
+    ProofNode granted_node({0});
+    granted_node.tau = 100.0;
 
     map<int, VarStats> stats;
 
@@ -224,15 +239,13 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
             {
                 s.neg_count++;
                 s.neg_indices.push_back(i);
-                if (is_unit)
-                    s.neg_unit_count++;
+                if (is_unit) s.neg_unit_count++;
             }
             else
             {
                 s.pos_count++;
                 s.pos_indices.push_back(i);
-                if (is_unit)
-                    s.pos_unit_count++;
+                if (is_unit) s.pos_unit_count++;
             }
         }
     }
@@ -241,17 +254,44 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
     // RR 3
     for (auto const &[id, s] : stats)
     {
-        if (s.pos_count > 0 && s.pos_unit_count >= s.neg_count)
-            return {s.pos_count};
-        if (s.neg_count > 0 && s.neg_unit_count >= s.pos_count)
-            return {s.neg_count};
+        if (s.pos_count > 0 && s.pos_unit_count >= s.neg_count) {
+            ProofNode child_node({s.pos_count});
+            child_node.tau = branching_factor({s.pos_count});
+            
+            ProofNode parent;
+            parent.type = "reduction"; parent.rule = "RR3"; parent.pivot_id = id;
+            parent.vec = child_node.vec; parent.tau = child_node.tau;
+            parent.formula_snapshot = this->get_snapshot();
+            parent.children.push_back(child_node);
+            return parent;
+        }
+        if (s.neg_count > 0 && s.neg_unit_count >= s.pos_count) {
+            ProofNode child_node({s.neg_count});
+            child_node.tau = branching_factor({s.neg_count});
+            
+            ProofNode parent;
+            parent.type = "reduction"; parent.rule = "RR3"; parent.pivot_id = id;
+            parent.vec = child_node.vec; parent.tau = child_node.tau;
+            parent.formula_snapshot = this->get_snapshot();
+            parent.children.push_back(child_node);
+            return parent;
+        }
     }
 
     // RR 2
     for (auto const &[id, s] : stats)
     {
-        if (s.pos_count == 1 && s.neg_count == 1)
-            return {1};
+        if (s.pos_count == 1 && s.neg_count == 1) {
+            ProofNode child_node({1});
+            child_node.tau = branching_factor({1});
+            
+            ProofNode parent;
+            parent.type = "reduction"; parent.rule = "RR2"; parent.pivot_id = id;
+            parent.vec = child_node.vec; parent.tau = child_node.tau;
+            parent.formula_snapshot = this->get_snapshot();
+            parent.children.push_back(child_node);
+            return parent;
+        }
     }
 
     // RR 4
@@ -265,7 +305,15 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
                 {
                     if (are_clauses_resolvable(clauses[idx_pos], id, false, clauses[idx_neg], true))
                     {
-                        return {1};
+                        ProofNode child_node({1});
+                        child_node.tau = branching_factor({1});
+                        
+                        ProofNode parent;
+                        parent.type = "reduction"; parent.rule = "RR4"; parent.pivot_id = id;
+                        parent.vec = child_node.vec; parent.tau = child_node.tau;
+                        parent.formula_snapshot = this->get_snapshot();
+                        parent.children.push_back(child_node);
+                        return parent;
                     }
                 }
             }
@@ -280,12 +328,18 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
             Clause *c = clauses[s.neg_indices[0]];
             for (Literal *l_y : c->lits)
             {
-                if (is_any_unknown_literal(l_y) || l_y->id == id)
-                    continue;
+                if (is_any_unknown_literal(l_y) || l_y->id == id) continue;
                 VarStats &sy = stats[l_y->id];
-                bool condition_met = l_y->inv ? (sy.pos_count == 1) : (sy.neg_count == 1);
-                if (condition_met)
-                    return {1};
+                if (l_y->inv ? (sy.pos_count == 1) : (sy.neg_count == 1)) {
+                    ProofNode child_node({1});
+                    child_node.tau = branching_factor({1});
+                    ProofNode parent;
+                    parent.type = "reduction"; parent.rule = "RR6"; parent.pivot_id = id;
+                    parent.vec = child_node.vec; parent.tau = child_node.tau;
+                    parent.formula_snapshot = this->get_snapshot();
+                    parent.children.push_back(child_node);
+                    return parent;
+                }
             }
         }
         if (s.pos_count == 1)
@@ -293,12 +347,18 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
             Clause *c = clauses[s.pos_indices[0]];
             for (Literal *l_y : c->lits)
             {
-                if (is_any_unknown_literal(l_y) || l_y->id == id)
-                    continue;
+                if (is_any_unknown_literal(l_y) || l_y->id == id) continue;
                 VarStats &sy = stats[l_y->id];
-                bool condition_met = l_y->inv ? (sy.pos_count == 1) : (sy.neg_count == 1);
-                if (condition_met)
-                    return {1};
+                if (l_y->inv ? (sy.pos_count == 1) : (sy.neg_count == 1)) {
+                    ProofNode child_node({1});
+                    child_node.tau = branching_factor({1});
+                    ProofNode parent;
+                    parent.type = "reduction"; parent.rule = "RR6"; parent.pivot_id = id;
+                    parent.vec = child_node.vec; parent.tau = child_node.tau;
+                    parent.formula_snapshot = this->get_snapshot();
+                    parent.children.push_back(child_node);
+                    return parent;
+                }
             }
         }
     }
@@ -311,42 +371,37 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
             if (s.neg_unit_count >= 1 || s.pos_unit_count >= 1)
             {
                 vector<int> step4_branch = {3, 3};
-                if (branching_factor(step4_branch) < granted)
+                double f = branching_factor(step4_branch);
+                if (f < granted)
                 {
-                    granted = branching_factor(step4_branch);
-                    granted_branch = step4_branch;
+                    granted = f;
+                    granted_node.vec = step4_branch;
+                    granted_node.tau = f;
+                    granted_node.formula_snapshot = this->get_snapshot();
                 }
             }
         }
-        else if (s.pos_count == 3 && s.neg_count == 2 && s.neg_unit_count >= 1)
+        else if ((s.pos_count == 3 && s.neg_count == 2 && s.neg_unit_count >= 1) || 
+                 (s.neg_count == 3 && s.pos_count == 2 && s.pos_unit_count >= 1))
         {
             vector<int> step4_branch = {5, 2};
-            if (branching_factor(step4_branch) < granted)
+            double f = branching_factor(step4_branch);
+            if (f < granted)
             {
-                granted = branching_factor(step4_branch);
-                granted_branch = step4_branch;
-            }
-        }
-        else if (s.neg_count == 3 && s.pos_count == 2 && s.pos_unit_count >= 1)
-        {
-            vector<int> step4_branch = {5, 2};
-
-            if (branching_factor(step4_branch) < granted)
-            {
-                granted = branching_factor(step4_branch);
-                granted_branch = step4_branch;
+                granted = f;
+                granted_node.vec = step4_branch;
+                granted_node.tau = f;
+                granted_node.formula_snapshot = this->get_snapshot();
             }
         }
     }
 
-    if (depth == 0)
-        return granted_branch;
+    if (depth == 0) return granted_node;
 
-    // --- Анализ Good Variables перед бренчингом ---
+    // --- Анализ Good Variables ---
     map<int, bool> is_good_var;
     bool any_good_exists = false;
 
-    // Проверяем все переменные, чтобы узнать, есть ли хотя бы одна good
     for (auto const &[var_id, s] : stats)
     {
         is_good_var[var_id] = false;
@@ -354,103 +409,98 @@ vector<int> CNF::xiao_branch(int depth, std::string first_var)
         {
             bool good = is_good_variable(this, var_id, s);
             is_good_var[var_id] = good;
-            if (good)
-                any_good_exists = true;
+            if (good) any_good_exists = true;
         }
     }
 
     // --- Branching ---
-
-    vector<int> best_branching;
+    ProofNode best_node;
     double min_tau = 1e18;
     bool any_var_processed = false;
-    int best_branch_var_id = -1;
 
     for (auto const &[var_id, s] : stats)
     {
-        vector<int> current_branching;
-
-        // Является ли текущая переменная целевой переменной x (first_var)?
         bool is_target_var = false;
         auto it = ID2VAR.find(var_id);
-        if (it != ID2VAR.end() && it->second == first_var)
-        {
-            is_target_var = true;
-        }
+        if (it != ID2VAR.end() && it->second == first_var) is_target_var = true;
 
-        // Проверяем, должны ли мы применять бесплатное ветвление (3,3) для целевой переменной
         bool is_3_2_var = ((s.pos_count == 3 && s.neg_count == 2) || (s.pos_count == 2 && s.neg_count == 3));
         bool apply_heuristic = is_target_var && is_3_2_var && !is_good_var[var_id] && any_good_exists;
 
-        // Ветвь 1: x = 1 (True)
-
+        // Ветвь 1: x = 1
         auto [reduced_cnt1, new_cnf1] = apply_xiao_assignment(this, var_id, true);
-        // Передаем пустую строку, чтобы предотвратить применение этого трюка на нижних уровнях
-        vector<int> child1_res = new_cnf1->xiao_branch(depth - 1, "");
+        ProofNode child1_res = new_cnf1->xiao_branch(depth - 1, "");
+        ProofNode stop1_res = (depth != 1) ? new_cnf1->xiao_branch(0, "") : child1_res;
 
-        vector<int> stop1_res = (depth != 1) ? new_cnf1->xiao_branch(0, "") : child1_res;
-
-        // Если x=1 — это та самая ветка, где удаляются 3 клозы
         if (apply_heuristic && s.pos_count == 3)
         {
-            double tau_child = branching_factor(child1_res);
+            double tau_child = child1_res.tau;
             double tau_33 = branching_factor({3, 3});
-            if (tau_33 < tau_child)
-            {
-                child1_res = {3, 3}; // Подмена рекурсивного ответа на бесплатное ветвление (3,3)
+            if (tau_33 < tau_child) {
+                child1_res.vec = {3, 3};
+                child1_res.tau = tau_33;
+                child1_res.type = "leaf";
+                child1_res.children.clear();
             }
         }
 
-        // Ветвь 2: x = 0 (False)
-
+        // Ветвь 2: x = 0
         auto [reduced_cnt0, new_cnf0] = apply_xiao_assignment(this, var_id, false);
-        // Передаем пустую строку для дочерних узлов
-        vector<int> child0_res = new_cnf0->xiao_branch(depth - 1, "");
-        vector<int> stop0_res = (depth != 1) ? new_cnf0->xiao_branch(0, "") : child0_res;
+        ProofNode child0_res = new_cnf0->xiao_branch(depth - 1, "");
+        ProofNode stop0_res = (depth != 1) ? new_cnf0->xiao_branch(0, "") : child0_res;
 
-        // Если x=0 — это та самая ветка, где удаляются 3 клозы
         if (apply_heuristic && s.neg_count == 3)
         {
-            double tau_child = branching_factor(child0_res);
+            double tau_child = child0_res.tau;
             double tau_33 = branching_factor({3, 3});
-            if (tau_33 < tau_child)
-            {
-                child0_res = {3, 3}; // Подмена на бесплатное ветвление (3,3)
+            if (tau_33 < tau_child) {
+                child0_res.vec = {3, 3};
+                child0_res.tau = tau_33;
+                child0_res.type = "leaf";
+                child0_res.children.clear();
             }
         }
 
-        double current_tau = 100;
+        ProofNode f_nodes[2] = {child1_res, stop1_res};
+        ProofNode s_nodes[2] = {child0_res, stop0_res};
 
-        for (vector<int> f : {child1_res, stop1_res})
+        for (int i = 0; i < 2; ++i)
         {
-            for (vector<int> s : {child0_res, stop0_res})
+            for (int j = 0; j < 2; ++j)
             {
-                current_branching.clear();
-                for (int el : f)
-                    current_branching.push_back(reduced_cnt1 + el);
-                for (int el : s)
-                    current_branching.push_back(reduced_cnt0 + el);
+                vector<int> current_branching;
+                for (int el : f_nodes[i].vec) current_branching.push_back(reduced_cnt1 + el);
+                for (int el : s_nodes[j].vec) current_branching.push_back(reduced_cnt0 + el);
 
-                current_tau = branching_factor(current_branching);
+                double current_tau = branching_factor(current_branching);
 
                 if (!any_var_processed || current_tau < min_tau)
                 {
                     min_tau = current_tau;
-                    best_branching = current_branching;
                     any_var_processed = true;
-                    best_branch_var_id = var_id;
+                    
+                    best_node.type = "branch";
+                    best_node.pivot_id = var_id;
+                    best_node.vec = current_branching;
+                    best_node.tau = current_tau;
+                    best_node.children = {f_nodes[i], s_nodes[j]};
                 }
             }
         }
+
+        // for (auto c : new_cnf1->clauses) delete c; delete new_cnf1;
+        // for (auto c : new_cnf0->clauses) delete c; delete new_cnf0;
     }
 
-    if (!any_var_processed)
-        return {0};
+    if (!any_var_processed) return ProofNode({0});
 
-    std::sort(best_branching.begin(), best_branching.end(), std::greater<int>());
+    std::sort(best_node.vec.begin(), best_node.vec.end(), std::greater<int>());
 
-    if (branching_factor(best_branching) > granted)
-        return granted_branch;
+    if (best_node.tau > granted) {
+        return granted_node;
+    }
 
-    return best_branching;
+    best_node.formula_snapshot = this->get_snapshot();
+
+    return best_node;
 }

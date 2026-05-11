@@ -14,10 +14,31 @@ extern int ID_COUNTER;
 
 extern double C; // Временная константа, решения ниже которой мы отбрасываем
 
+double branching_factor(const vector<int> &a, double tol = 1e-12);
+
 struct
 {
     int MAXIMUM_CLAUSE_SIZE;
 } MaxSATSettings;
+
+struct ProofNode {
+    std::string type;       // "leaf", "reduction", "branch"
+    std::string rule;       // Название правила (например, "RR3")
+    int pivot_id = -1;      // Переменная, по которой идет ветвление/редукция
+    std::vector<int> vec;   // Итоговый вектор редукций (например, {3, 3})
+    double tau = 100.0;     // Итоговый branching factor
+   
+    int target_clause_idx = -1; // Для узла empty_divide
+    std::vector<int> partition;
+    std::vector<std::vector<int>> formula_snapshot; 
+    
+    std::vector<ProofNode> children;
+
+    ProofNode() {}
+    
+    ProofNode(std::vector<int> v) : type("leaf"), vec(v), tau(branching_factor(v)) {}
+};
+
 
 class Literal
 {
@@ -99,24 +120,35 @@ public:
     //     }
     // }
 
-    vector<int> branch(vector<int> ids);
+    ProofNode branch(vector<int> ids);
 
-    vector<int> branch_group(vector<int> ids, int max_partitions = -1);
+    ProofNode branch_group(vector<int> ids, int max_partitions = -1);
 
-    vector<int> xiao_branch(int depth, string first_var = "x");
+    ProofNode xiao_branch(int depth, string first_var = "x");
+
+    std::vector<std::vector<int>> get_snapshot();
 
     vector<Clause *> clauses;
+
+
 };
+
+struct DivideResult {
+    int clause_idx = -1;
+    CNF* cnf_empty = nullptr;
+    CNF* cnf_not_empty = nullptr;
+    ProofNode proof_tree; // Общий предок, связывающий два поддерева
+};
+
 
 // int calculate_F(CNF &cnf, int var_id);
 
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type); //,const std::function<bool(int, bool, bool, Clause*)>& condition_func = [](int, bool, bool, Clause*){ return true; });
 vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector<LiteralDegType> variants = POSSIBLE_LITERALS);
 
-pair<CNF*, CNF*> empty_divide(CNF* cnf);
+DivideResult empty_divide(CNF* cnf);
 
 bool is_A_subset_of_B(int A, int B);
-double branching_factor(const vector<int> &a, double tol = 1e-12);
 
 void print_clause(Clause &c);
 void print_cnf(CNF &cnf);

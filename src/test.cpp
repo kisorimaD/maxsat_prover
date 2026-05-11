@@ -1,11 +1,74 @@
 #include "cnf.h"
 #include "test.h"
+#include "cert_logger.h"
+
 #include <assert.h>
 #include <iostream>
 #include <sstream>
 #include <functional>
 
 using namespace std;
+
+
+// Вспомогательная функция для сборки временного CNF из слепка
+CNF* create_dummy_cnf(const std::vector<std::vector<int>>& snap) {
+    CNF* cnf = new CNF();
+    for(const auto& cl : snap) {
+        std::vector<Literal*> lits;
+        for(int v : cl) {
+            if(v == 0) lits.push_back(&UNKNOWN_LITERAL);
+            else if(v == 1) lits.push_back(&UNKNOWN_NOT_EMPTY_LITERAL);
+            else lits.push_back(new Literal(abs(v), v < 0)); 
+        }
+        cnf->clauses.push_back(new Clause(lits));
+    }
+    return cnf;
+}
+
+// Очистка фиктивного CNF
+void delete_dummy_cnf(CNF* cnf) {
+    for(Clause* c : cnf->clauses) {
+        for(Literal* l : c->lits) {
+            if(l != &UNKNOWN_LITERAL && l != &UNKNOWN_NOT_EMPTY_LITERAL) delete l;
+        }
+        delete c;
+    }
+    delete cnf;
+}
+
+// Рекурсивный обход AST дерева и запись в JSON
+void dump_proof_tree(const ProofNode& node, const string& id_prefix) {
+    auto scope = global_logger.open_node();
+    
+    CNF* dummy = create_dummy_cnf(node.formula_snapshot);
+
+    if (node.type == "leaf") {
+        global_logger.log_leaf(id_prefix, node.vec, node.tau, dummy, node.partition);
+    } 
+
+    else if (node.type == "reduction") {
+        global_logger.log_reduction(id_prefix, node.rule, node.pivot_id, dummy);
+        global_logger.begin_children();
+        if (!node.children.empty()) dump_proof_tree(node.children[0], id_prefix + "_child");
+        global_logger.end_children();
+    } 
+    else if (node.type == "branch") {
+        global_logger.log_branch(id_prefix, node.pivot_id, dummy);
+        global_logger.begin_children();
+        if (node.children.size() > 0) dump_proof_tree(node.children[0], id_prefix + "_T");
+        if (node.children.size() > 1) dump_proof_tree(node.children[1], id_prefix + "_F");
+        global_logger.end_children();
+    }
+    else if (node.type == "divide_clause") {
+        global_logger.log_divide(id_prefix, node.target_clause_idx, dummy);
+        global_logger.begin_children();
+        if (node.children.size() > 0) dump_proof_tree(node.children[0], id_prefix + "_empty");
+        if (node.children.size() > 1) dump_proof_tree(node.children[1], id_prefix + "_not_empty");
+        global_logger.end_children();
+    }
+    
+    delete_dummy_cnf(dummy);
+}
 
 void test_basics()
 {
@@ -31,22 +94,22 @@ void test_basics()
 
 void test_simple_branch()
 {
-    CNF cnf;
+    // CNF cnf;
 
-    CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
-    print_cnf(*with_x);
+    // CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
+    // print_cnf(*with_x);
 
-    Literal x = Literal("x");
+    // Literal x = Literal("x");
 
-    assert(x.id == 1);
+    // assert(x.id == 1);
 
-    vector<int> b = with_x->branch({x.id});
+    // vector<int> b = with_x->branch({x.id});
 
-    for (int f : b)
-    {
-        cout << f << " ";
-    }
-    cout << endl;
+    // for (int f : b)
+    // {
+    //     cout << f << " ";
+    // }
+    // cout << endl;
 }
 
 void test_branching_factor()
@@ -58,134 +121,134 @@ void test_branching_factor()
 
 void test_branch_three_vars()
 {
-    CNF cnf;
+    // CNF cnf;
 
-    CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
-    cout << "Добавляем в рассмотрение первую переменную х (3, 2)";
+    // CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
+    // cout << "Добавляем в рассмотрение первую переменную х (3, 2)";
 
-    print_cnf(*with_x);
+    // print_cnf(*with_x);
 
-    cout << "Добавляем переменную y (2, 3)-литерал\n";
+    // cout << "Добавляем переменную y (2, 3)-литерал\n";
 
-    vector<CNF *> with_y = add_new_var(with_x, "y", 3, 2, ANY);
+    // vector<CNF *> with_y = add_new_var(with_x, "y", 3, 2, ANY);
 
-    vector<CNF *> with_z;
+    // vector<CNF *> with_z;
 
-    cout << "Получили " << with_y.size() << " вариантов" << endl;
+    // cout << "Получили " << with_y.size() << " вариантов" << endl;
 
-    cout << "Добавляем z (2, 3)" << endl;
+    // cout << "Добавляем z (2, 3)" << endl;
 
-    for (CNF *br : with_y)
-    {
-        auto new_vars = add_new_var(br, "z", 3, 2, ANY);
+    // for (CNF *br : with_y)
+    // {
+    //     auto new_vars = add_new_var(br, "z", 3, 2, ANY);
 
-        with_z.resize(with_z.size() + new_vars.size());
-        copy(new_vars.begin(), new_vars.end(), with_z.rbegin());
-    }
+    //     with_z.resize(with_z.size() + new_vars.size());
+    //     copy(new_vars.begin(), new_vars.end(), with_z.rbegin());
+    // }
 
-    cout << "Итого без эвристик и группировок получили " << with_z.size() << " вариантов" << endl;
+    // cout << "Итого без эвристик и группировок получили " << with_z.size() << " вариантов" << endl;
 
-    cout << "\n\n============[ Начинаем бренчинг по этим вариантам ]==============\n";
+    // cout << "\n\n============[ Начинаем бренчинг по этим вариантам ]==============\n";
 
-    double mx_factor = 0;
-    CNF *mx_cnf = nullptr;
-    vector<int> mx_branch;
+    // double mx_factor = 0;
+    // CNF *mx_cnf = nullptr;
+    // vector<int> mx_branch;
 
-    Literal x = Literal("x");
-    Literal y = Literal("y");
-    Literal z = Literal("z");
+    // Literal x = Literal("x");
+    // Literal y = Literal("y");
+    // Literal z = Literal("z");
 
-    for (int i = 0; i < (int)with_z.size(); ++i)
-    {
-        cout << "Выполняется " << i << "/" << with_z.size() << "                \r";
+    // for (int i = 0; i < (int)with_z.size(); ++i)
+    // {
+    //     cout << "Выполняется " << i << "/" << with_z.size() << "                \r";
 
-        vector<int> branch = with_z[i]->branch({x.id, y.id, z.id});
+    //     vector<int> branch = with_z[i]->branch({x.id, y.id, z.id});
 
-        double factor = branching_factor(branch);
+    //     double factor = branching_factor(branch);
 
-        if (factor > mx_factor)
-        {
-            mx_factor = factor;
-            mx_cnf = with_z[i];
-            mx_branch = branch;
-        }
-    }
+    //     if (factor > mx_factor)
+    //     {
+    //         mx_factor = factor;
+    //         mx_cnf = with_z[i];
+    //         mx_branch = branch;
+    //     }
+    // }
 
-    cout << "======================[ Перебор завершен ]=======================\n\n";
+    // cout << "======================[ Перебор завершен ]=======================\n\n";
 
-    if (mx_factor == 0)
-    {
-        cout << "ERROR\n";
-        return;
-    }
+    // if (mx_factor == 0)
+    // {
+    //     cout << "ERROR\n";
+    //     return;
+    // }
 
-    cout << "Худший вариант:\n";
-    print_cnf(*mx_cnf);
-    cout << "\nBranch: ";
-    for (int b : mx_branch)
-    {
-        cout << b << " ";
-    }
-    cout << "\nBranching Factor: " << mx_factor << endl;
+    // cout << "Худший вариант:\n";
+    // print_cnf(*mx_cnf);
+    // cout << "\nBranch: ";
+    // for (int b : mx_branch)
+    // {
+    //     cout << b << " ";
+    // }
+    // cout << "\nBranching Factor: " << mx_factor << endl;
 }
 
 void test_branch_two_vars()
 {
-    CNF cnf;
+    // CNF cnf;
 
-    CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
-    cout << "Добавляем в рассмотрение первую переменную х (3, 2)";
+    // CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
+    // cout << "Добавляем в рассмотрение первую переменную х (3, 2)";
 
-    print_cnf(*with_x);
+    // print_cnf(*with_x);
 
-    cout << "Добавляем переменную y (4, 1)-singleton-литерал\n";
+    // cout << "Добавляем переменную y (4, 1)-singleton-литерал\n";
 
-    // vector<CNF *> with_y = add_new_var(with_x, "y", 4, 1, SINGLETON);
-    vector<CNF *> with_y = add_new_var(with_x, "y", 3, 2, ANY);
+    // // vector<CNF *> with_y = add_new_var(with_x, "y", 4, 1, SINGLETON);
+    // vector<CNF *> with_y = add_new_var(with_x, "y", 3, 2, ANY);
 
-    cout << "Получили " << with_y.size() << " вариантов" << endl;
+    // cout << "Получили " << with_y.size() << " вариантов" << endl;
 
-    cout << "\n\n============[ Начинаем бренчинг по этим вариантам ]==============\n";
+    // cout << "\n\n============[ Начинаем бренчинг по этим вариантам ]==============\n";
 
-    double mx_factor = 0;
-    CNF *mx_cnf = nullptr;
-    vector<int> mx_branch;
+    // double mx_factor = 0;
+    // CNF *mx_cnf = nullptr;
+    // vector<int> mx_branch;
 
-    Literal x = Literal("x");
-    Literal y = Literal("y");
+    // Literal x = Literal("x");
+    // Literal y = Literal("y");
 
-    for (int i = 0; i < (int)with_y.size(); ++i)
-    {
-        cout << "Выполняется " << i << "/" << with_y.size() << "                \r";
+    // for (int i = 0; i < (int)with_y.size(); ++i)
+    // {
+    //     cout << "Выполняется " << i << "/" << with_y.size() << "                \r";
 
-        vector<int> branch = with_y[i]->branch({x.id, y.id});
+    //     vector<int> branch = with_y[i]->branch({x.id, y.id});
 
-        double factor = branching_factor(branch);
+    //     double factor = branching_factor(branch);
 
-        if (factor > mx_factor)
-        {
-            mx_factor = factor;
-            mx_cnf = with_y[i];
-            mx_branch = branch;
-        }
-    }
+    //     if (factor > mx_factor)
+    //     {
+    //         mx_factor = factor;
+    //         mx_cnf = with_y[i];
+    //         mx_branch = branch;
+    //     }
+    // }
 
-    cout << "======================[ Перебор завершен ]=======================\n\n";
+    // cout << "======================[ Перебор завершен ]=======================\n\n";
 
-    if (mx_factor == 0)
-    {
-        cout << "ERROR\n";
-        return;
-    }
+    // if (mx_factor == 0)
+    // {
+    //     cout << "ERROR\n";
+    //     return;
+    // }
 
-    cout << "Худший вариант:\n";
-    print_cnf(*mx_cnf);
-    cout << "\nBranch: ";
-    for (int b : mx_branch)
-    {
-        cout << b << " ";
-    }
-    cout << "\nBranching Factor: " << mx_factor << endl;
+    // cout << "Худший вариант:\n";
+    // print_cnf(*mx_cnf);
+    // cout << "\nBranch: ";
+    // for (int b : mx_branch)
+    // {
+    //     cout << b << " ";
+    // }
+    // cout << "\nBranching Factor: " << mx_factor << endl;
 }
 
 void test_subset_func()
@@ -296,49 +359,49 @@ void pretty_branch_print(vector<string> &vars, CNF *cnf)
 void test_no_unknown_literal()
 {
 
-    CNF cnf;
+    // CNF cnf;
 
-    CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
+    // CNF *with_x = add_new_var(&cnf, "x", 2, 3, ANY).at(0);
 
-    cout << "Добавляем в рассмотрение первую переменную х (3, 2)";
+    // cout << "Добавляем в рассмотрение первую переменную х (3, 2)";
 
-    print_cnf(*with_x);
+    // print_cnf(*with_x);
 
-    cout << "Добавляем переменную y (3, 2)-литерал\n";
+    // cout << "Добавляем переменную y (3, 2)-литерал\n";
 
-    vector<CNF *> with_y = add_new_var(with_x, "y", 4, 1, SINGLETON);
+    // vector<CNF *> with_y = add_new_var(with_x, "y", 4, 1, SINGLETON);
 
-    cout << "Размер: " << with_y.size() << endl;
+    // cout << "Размер: " << with_y.size() << endl;
 
-    cout << "Введите номер клозы для проверки разбора. -1 для окончания теста\n";
+    // cout << "Введите номер клозы для проверки разбора. -1 для окончания теста\n";
 
-    int k;
-    cin >> k;
+    // int k;
+    // cin >> k;
 
-    vector<string> vars = {"x", "y"};
+    // vector<string> vars = {"x", "y"};
 
-    Literal x = Literal("x");
-    Literal y = Literal("y");
+    // Literal x = Literal("x");
+    // Literal y = Literal("y");
 
-    while (k != -1)
-    {
-        pretty_branch_print(vars, with_y.at(k));
+    // while (k != -1)
+    // {
+    //     pretty_branch_print(vars, with_y.at(k));
 
-        vector<int> reg_branch = with_y.at(k)->branch({x.id, y.id});
-        vector<int> group_branch = with_y.at(k)->branch_group({x.id, y.id});
+    //     vector<int> reg_branch = with_y.at(k)->branch({x.id, y.id});
+    //     vector<int> group_branch = with_y.at(k)->branch_group({x.id, y.id});
 
-        cout << "Regular Branch:\n";
-        for (int r : reg_branch)
-            cout << r << " ";
-        cout << endl;
+    //     cout << "Regular Branch:\n";
+    //     for (int r : reg_branch)
+    //         cout << r << " ";
+    //     cout << endl;
 
-        cout << "Group Branch:\n";
-        for (int r : group_branch)
-            cout << r << " ";
-        cout << endl;
+    //     cout << "Group Branch:\n";
+    //     for (int r : group_branch)
+    //         cout << r << " ";
+    //     cout << endl;
 
-        cin >> k;
-    }
+    //     cin >> k;
+    // }
 }
 
 function<int(CNF *)> create_pos_func(set<Literal *, LiteralPtrLess> need_lits, set<Literal *, LiteralPtrLess> no_lits)
@@ -405,14 +468,16 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
     cout << "Начинается примитивная фильтрация\n";
     vector<CNF *> filtered_variants;
 
-    for (CNF *cnf : variants)
+    for (int i = 0; i < variants.size(); ++i)
     {
-        vector<int> naive_branch = cnf->branch(ids);
-        double bf = branching_factor(naive_branch);
+        CNF *cnf = variants[i];
+        ProofNode naive_node = cnf->branch(ids); // Используем ProofNode
 
-        if (bf >= C)
-        {
+        if (naive_node.tau >= C) {
             filtered_variants.push_back(cnf);
+        } else {
+            // Вычеркиваем и сохраняем!
+            dump_proof_tree(naive_node, "naive_proof_" + to_string(i));
         }
     }
 
@@ -425,14 +490,15 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         swap(filtered_variants, variants);
         filtered_variants.clear();
 
-        for(CNF *cnf : variants)
+        for (int i = 0; i < variants.size(); ++i)
         {
-            vector <int> rrbranch = cnf->xiao_branch(xiao_depth);
-            double bf = branching_factor(rrbranch);
+            CNF *cnf = variants[i];
+            ProofNode rr_node = cnf->xiao_branch(xiao_depth);
 
-            if (bf >= C)
-            {
+            if (rr_node.tau >= C) {
                 filtered_variants.push_back(cnf);
+            } else {
+                dump_proof_tree(rr_node, "xiao_proof_" + to_string(i));
             }
         }
         
@@ -466,45 +532,27 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
 
     int vsize = variants.size();
 
-    for (CNF *cnf : variants)
+
+    for (int i = 0; i < variants.size(); ++i)
     {
-        // try k = ids.size()
-        // vector<int> approx_group_branch = cnf->branch_group(ids, ids.size());
-        // double small_try_bf = branching_factor(approx_group_branch);
-
-        // if (small_try_bf >= C)
-        // {
-        //     vector<int> group_branch = cnf->branch_group(ids, -1);
-        //     double bf = branching_factor(group_branch);
-
-        //     if (bf >= C)
-        //     {
-        //         filtered_variants.push_back(cnf);
-        //     }
-        // }
-
+        CNF *cnf = variants[i];
         bool flag = false;
-        for (int k = 2; k <= ids.size(); ++k)
-        {
-            vector<int> approx_group_branch = cnf->branch_group(ids, k);
-            double small_try_bf = branching_factor(approx_group_branch);
-
-            if (small_try_bf < C)
-            {
+        
+        for (int k = 2; k <= ids.size(); ++k) {
+            ProofNode approx_node = cnf->branch_group(ids, k);
+            if (approx_node.tau < C) {
                 flag = true;
+                dump_proof_tree(approx_node, "group_approx_proof_" + to_string(i));
                 break;
             }
         }
 
-        if (!flag)
-        {
-            // filtered_variants.push_back(cnf);
-            vector<int> group_branch = cnf->branch_group(ids, -1);
-            double bf = branching_factor(group_branch);
-
-            if (bf >= C)
-            {
+        if (!flag) {
+            ProofNode full_group_node = cnf->branch_group(ids, -1);
+            if (full_group_node.tau >= C) {
                 filtered_variants.push_back(cnf);
+            } else {
+                dump_proof_tree(full_group_node, "group_proof_" + to_string(i));
             }
         }
 
@@ -856,9 +904,13 @@ void test_universal()
             pretty_branch_print(vars, cur.at(i));
             cout << endl;
 
-            vector<int> reg_branch = cur.at(i)->branch(ids);
-            vector<int> group_branch = cur.at(i)->branch_group(ids);
-            vector<int> xiao_branch = cur.at(i)->xiao_branch(1);
+            ProofNode reg_node = cur.at(i)->branch(ids);
+            ProofNode group_node = cur.at(i)->branch_group(ids);
+            ProofNode xiao_node = cur.at(i)->xiao_branch(1);
+
+            vector<int> reg_branch = reg_node.vec;
+            vector<int> group_branch = group_node.vec;
+            vector<int> xiao_branch = xiao_node.vec;
 
             cout << "Regular Branch:\n";
             for (int r : reg_branch)
@@ -893,9 +945,13 @@ void test_universal()
                 pretty_branch_print(vars, cur.at(i));
                 cout << endl;
 
-                vector<int> reg_branch = cur.at(i)->branch(ids);
-                vector<int> group_branch = cur.at(i)->branch_group(ids);
-                vector<int> xiao_branch = cur.at(i)->xiao_branch(1);
+                ProofNode reg_node = cur.at(i)->branch(ids);
+                ProofNode group_node = cur.at(i)->branch_group(ids);
+                ProofNode xiao_node = cur.at(i)->xiao_branch(1);
+
+                vector<int> reg_branch = reg_node.vec;
+                vector<int> group_branch = group_node.vec;
+                vector<int> xiao_branch = xiao_node.vec;
 
                 cout << "Group Branch:\n";
                 for (int r : group_branch)
@@ -923,9 +979,7 @@ void test_universal()
             int worst_ind = -1;
             for (int i = 0; i < cur.size(); ++i)
             {
-                vector<int> group_branch = cur.at(i)->branch_group(ids);
-
-                double gfactor = branching_factor(group_branch);
+                double gfactor = cur.at(i)->branch_group(ids).tau;
                 
                 if (gfactor > worst)
                 {
@@ -956,11 +1010,8 @@ void test_universal()
 
             for (CNF *cnf : cur)
             {
-                vector<int> group_branch = cnf->branch_group(ids);
-                vector<int> xiao_branch = cnf->xiao_branch(1);
-
-                double gfactor = branching_factor(group_branch);
-                double xfactor = branching_factor(xiao_branch);
+                double gfactor = cnf->branch_group(ids).tau;
+                double xfactor = cnf->xiao_branch(1).tau;
 
                 // Берем минимум между групповым ветвлением и ветвлением xiao
                 double current_bf = min(gfactor, xfactor);
@@ -988,13 +1039,17 @@ void test_universal()
                 
                 for (CNF *cnf : cur)
                 {
-                    pair<CNF *, CNF *> res = empty_divide(cnf);
-                    if (res.first != nullptr)
+                    DivideResult res = empty_divide(cnf);
+                    if (res.cnf_empty != nullptr)
                     {
-                        next_cur.push_back(res.first);
-                        next_cur.push_back(res.second);
+                        next_cur.push_back(res.cnf_empty);
+                        next_cur.push_back(res.cnf_not_empty);
                         success_count++;
-                        // Утечки памяти: желательно сделать delete cnf;    
+                        
+                        // ВАЖНО: Если tau < C, пишем в сертификат
+                        if (res.proof_tree.tau < C) {
+                            dump_proof_tree(res.proof_tree, "empty_divide_success_" + to_string(success_count));
+                        }
                     }
                     else
                     {
@@ -1007,30 +1062,31 @@ void test_universal()
             }
             else
             {
-                if (i >= 0 && i < (int)cur.size())
-                {
-                    pair<CNF *, CNF *> res = empty_divide(cur[i]);
-                    if (res.first != nullptr)
-                    {
-                        // Удаляем старую формулу и на её место вставляем две новые
-                        CNF* old_cnf = cur[i];
-                        cur.erase(cur.begin() + i);
-                        cur.insert(cur.begin() + i, res.second);
-                        cur.insert(cur.begin() + i, res.first);
-                        // delete old_cnf; // Не забывайте про освобождение памяти
+                cout << "Извините, пока что empty_divide работает только с -1\n\n";
+                // if (i >= 0 && i < (int)cur.size())
+                // {
+                //     pair<CNF *, CNF *> res = empty_divide(cur[i]);
+                //     if (res.first != nullptr)
+                //     {
+                //         // Удаляем старую формулу и на её место вставляем две новые
+                //         CNF* old_cnf = cur[i];
+                //         cur.erase(cur.begin() + i);
+                //         cur.insert(cur.begin() + i, res.second);
+                //         cur.insert(cur.begin() + i, res.first);
+                //         // delete old_cnf; // Не забывайте про освобождение памяти
 
-                        cout << "empty_divide успешно применен к формуле " << i << ".\n";
-                        cout << "Теперь в рассмотрении [" << cur.size() << "] вариантов.\n\n";
-                    }
-                    else
-                    {
-                        cout << "В формуле " << i << " не найдено литералов '?' для разбиения.\n\n";
-                    }
-                }
-                else
-                {
-                    cout << "Неверный индекс формулы.\n\n";
-                }
+                //         cout << "empty_divide успешно применен к формуле " << i << ".\n";
+                //         cout << "Теперь в рассмотрении [" << cur.size() << "] вариантов.\n\n";
+                //     }
+                //     else
+                //     {
+                //         cout << "В формуле " << i << " не найдено литералов '?' для разбиения.\n\n";
+                //     }
+                // }
+                // else
+                // {
+                //     cout << "Неверный индекс формулы.\n\n";
+                // }
             }
             continue;
         }

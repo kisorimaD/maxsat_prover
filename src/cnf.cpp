@@ -53,6 +53,19 @@ Literal::Literal(int _id, bool is_inv)
 
 Literal Literal::neg() const { return Literal(id, !inv); }
 
+std::vector<std::vector<int>> CNF::get_snapshot() {
+    std::vector<std::vector<int>> snap;
+    for (Clause* c : clauses) {
+        std::vector<int> cl_snap;
+        for (Literal* l : c->lits) {
+            if (l->id == 0 || l->id == 1) cl_snap.push_back(l->id);
+            else cl_snap.push_back((l->inv ? -1 : 1) * l->id);
+        }
+        snap.push_back(cl_snap);
+    }
+    return snap;
+}
+
 bool is_A_subset_of_B(int A, int B)
 {
     int A_without_B = (A | B) ^ B;
@@ -136,7 +149,7 @@ int count_set_bits(int n)
     return cnt;
 }
 
-vector<int> CNF::branch(vector<int> ids)
+ProofNode CNF::branch(vector<int> ids)
 {
 
     int k = ids.size();
@@ -196,7 +209,12 @@ vector<int> CNF::branch(vector<int> ids)
         }
     }
 
-    return branch;
+    ProofNode node(branch);
+    node.formula_snapshot = this->get_snapshot();
+    // В обычном branch разбиение — это просто последовательность [0, 1, 2... rcnt-1]
+    for(int i = 0; i < (int)branch.size(); ++i) node.partition.push_back(i);
+    
+    return node;
 }
 
 bool get_next_product(vector<int> &cs)
@@ -268,7 +286,7 @@ bool get_next_3_partition_fast(std::vector<int> &c,
     return true;
 }
 
-vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
+ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
 {
     partition_ind = 0;
 
@@ -964,7 +982,16 @@ vector<int> CNF::branch_group(vector<int> ids, int max_partitions)
     } while (is_3_case ? get_next_3_partition_fast(cs, mask_of_reduced_subsets)
                        : get_next_partition(cs, max_partitions));
 
-    return mn_branch;
+    if (mn_branch.empty()) return ProofNode({0});
+
+    ProofNode node;
+    node.type = "leaf";
+    node.vec = mn_branch;
+    node.tau = mn_factor;
+    node.partition = mn_partition;
+    node.formula_snapshot = this->get_snapshot();
+    
+    return node;
 }
 
 double f_value(double x, const vector<int> &a)
@@ -1428,18 +1455,14 @@ add_new_var_in_place(CNF *cnf, string v_name,
 }
 
 // Функция возвращает пару {CNF_с_пустотой, CNF_с_непустотой(?+)}
-pair<CNF *, CNF *> empty_divide(CNF *cnf)
+DivideResult empty_divide(CNF *cnf)
 {
-    pair<CNF *, CNF *> best_split = {nullptr, nullptr};
+    DivideResult best_split;
     double min_worst_factor = std::numeric_limits<double>::infinity();
 
     vector<int> ids;
-
-    for (auto p : ID2VAR)
-    {
-        if (p.first != UNKNOWN_LITERAL.id &&
-            p.first != UNKNOWN_NOT_EMPTY_LITERAL.id)
-        {
+    for (auto p : ID2VAR) {
+        if (p.first != UNKNOWN_LITERAL.id && p.first != UNKNOWN_NOT_EMPTY_LITERAL.id) {
             ids.push_back(p.first);
         }
     }
@@ -1451,8 +1474,7 @@ pair<CNF *, CNF *> empty_divide(CNF *cnf)
         // Ищем клозу, в которой есть обычный '?'
         if (c->lits.find(&UNKNOWN_LITERAL) != c->lits.end())
         {
-
-            // 1. Создаем ветку, где '?' означает пустоту (просто удаляем '?')
+            // 1. Создаем ветку, где '?' означает пустоту (удаляем '?')
             CNF *cnf_empty = new CNF(*cnf);
             cnf_empty->clauses[i]->lits.erase(&UNKNOWN_LITERAL);
 
@@ -1461,31 +1483,36 @@ pair<CNF *, CNF *> empty_divide(CNF *cnf)
             cnf_not_empty->clauses[i]->lits.erase(&UNKNOWN_LITERAL);
             cnf_not_empty->clauses[i]->lits.insert(&UNKNOWN_NOT_EMPTY_LITERAL);
 
-            // Оцениваем обе ветки.
-            // Примечание: предполагается, что xiao_branch возвращает вектор редукций
-            // (или вызывает group_branch внутри себя для поиска лучшего ветвления).
-            double factor_empty =
-                min(branching_factor(cnf_empty->xiao_branch(1, "x")),
-                    branching_factor(cnf_empty->branch_group(ids)));
-            double factor_not_empty =
-                min(branching_factor(cnf_not_empty->xiao_branch(1, "x")),
-                    branching_factor(cnf_not_empty->branch_group(ids)));
+            // Оцениваем обе ветки. Теперь xiao_branch и branch_group возвращают ProofNode
+            ProofNode empty_xiao = cnf_empty->xiao_branch(1, "x");
+            ProofNode empty_group = cnf_empty->branch_group(ids);
+            ProofNode best_empty = (empty_xiao.tau < empty_group.tau) ? empty_xiao : empty_group;
 
-            // Худший случай при данном разбиении (мы вынуждены будем пойти в худшую
-            // из двух веток)
-            double worst_factor = max(factor_empty, factor_not_empty);
+            ProofNode not_empty_xiao = cnf_not_empty->xiao_branch(1, "x");
+            ProofNode not_empty_group = cnf_not_empty->branch_group(ids);
+            ProofNode best_not_empty = (not_empty_xiao.tau < not_empty_group.tau) ? not_empty_xiao : not_empty_group;
+
+            // Худший случай при данном разбиении
+            double worst_factor = max(best_empty.tau, best_not_empty.tau);
 
             if (worst_factor < min_worst_factor)
             {
                 min_worst_factor = worst_factor;
 
-                // Очищаем предыдущий лучший вариант, чтобы не было утечек памяти
-                if (best_split.first)
-                    delete best_split.first;
-                if (best_split.second)
-                    delete best_split.second;
+                // Очищаем предыдущий лучший вариант
+                if (best_split.cnf_empty) delete best_split.cnf_empty;
+                if (best_split.cnf_not_empty) delete best_split.cnf_not_empty;
 
-                best_split = {cnf_empty, cnf_not_empty};
+                best_split.clause_idx = i;
+                best_split.cnf_empty = cnf_empty;
+                best_split.cnf_not_empty = cnf_not_empty;
+
+                // СВЯЗЫВАЕМ СЕРТИФИКАТЫ ОБЩИМ ПРЕДКОМ
+                best_split.proof_tree.type = "divide_clause";
+                best_split.proof_tree.target_clause_idx = i;
+                best_split.proof_tree.tau = worst_factor;
+                best_split.proof_tree.formula_snapshot = cnf->get_snapshot();
+                best_split.proof_tree.children = {best_empty, best_not_empty};
             }
             else
             {
