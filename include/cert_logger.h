@@ -5,6 +5,8 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <map>
+#include <cnf.h>
 
 class CNF; // Предварительное объявление графа формулы
 
@@ -36,11 +38,11 @@ public:
     void end_children();
 
     // Методы регистрации грануляции
-    void log_add_var(const std::string& id, const std::string& var, CNF* cnf);
+    void log_add_var(const std::string& id, int var_id, int pos_deg, int neg_deg, CNF* cnf);
     void log_divide(const std::string& id, int clause_idx, CNF* cnf);
-    void log_reduction(const std::string& id, const std::string& rule, int pivot, CNF* cnf);
+    void log_reduction(const std::string& id, const std::string& rule, int pivot, CNF* cnf, const std::vector<int>& rr_witness_clauses = {});
     void log_branch(const std::string& id, int pivot, CNF* cnf);
-    void log_leaf(const std::string& id, const std::vector<int>& vec, double tau, CNF* cnf, const std::vector<int>& partition);
+    void log_leaf(const std::string& id, const std::vector<int>& vec, double tau, CNF* cnf, const std::vector<int>& partition, const std::map<int, int>& subsumptions = {}, const std::vector<GroupWitness>& group_witnesses = {});
 };
 
 extern TreeLogger global_logger;

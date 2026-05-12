@@ -312,6 +312,9 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
                         parent.type = "reduction"; parent.rule = "RR4"; parent.pivot_id = id;
                         parent.vec = child_node.vec; parent.tau = child_node.tau;
                         parent.formula_snapshot = this->get_snapshot();
+
+                        parent.rr_witness_clauses = {idx_pos, idx_neg};
+
                         parent.children.push_back(child_node);
                         return parent;
                     }

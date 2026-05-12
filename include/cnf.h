@@ -21,6 +21,21 @@ struct
     int MAXIMUM_CLAUSE_SIZE;
 } MaxSATSettings;
 
+struct GroupWitness {
+    std::string rule;            // "basic", "cross_reduce", "lemma2", "lemma3", "double_lemma3"
+    int basic_reduce_val = 0;    
+    
+    // Специфичные аргументы для cross_reduce
+    int cross_row_idx = -1;      
+    int cross_size = -1;         
+
+    // Специфичные аргументы для лемм
+    int lemma_var_id = -1;
+    int lemma_local_D = -1;
+    int lemma_pos_count = -1;
+    int lemma_neg_count = -1;
+};
+
 struct ProofNode {
     std::string type;       // "leaf", "reduction", "branch"
     std::string rule;       // Название правила (например, "RR3")
@@ -33,6 +48,12 @@ struct ProofNode {
     std::vector<std::vector<int>> formula_snapshot; 
     
     std::vector<ProofNode> children;
+
+    std::map<int, int> subsumptions; 
+    
+    std::vector<GroupWitness> group_witnesses;
+    std::vector<std::string> grouping_justifications; 
+    std::vector<int> rr_witness_clauses;
 
     ProofNode() {}
     

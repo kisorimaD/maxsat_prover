@@ -163,6 +163,9 @@ ProofNode CNF::branch(vector<int> ids)
     calculate_variants(*this, ids, clauses_mask, reduced_clauses,
                        no_clauses_mask);
 
+    std::map<int, int> current_subsumptions;
+    vector<int> valid_masks;
+
     for (int mask = 0; mask < (1 << k); ++mask)
     {
         bool is_subset = false;
@@ -192,12 +195,14 @@ ProofNode CNF::branch(vector<int> ids)
                     continue;
                 }
 
+                current_subsumptions[mask] = other_mask; 
                 is_subset = true;
                 break;
             }
 
             if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
             {
+                current_subsumptions[mask] = other_mask; 
                 is_subset = true;
                 break;
             }
@@ -206,13 +211,19 @@ ProofNode CNF::branch(vector<int> ids)
         if (!is_subset)
         {
             branch.push_back(reduced_clauses[mask]);
+            valid_masks.push_back(mask);
         }
     }
 
     ProofNode node(branch);
     node.formula_snapshot = this->get_snapshot();
-    // В обычном branch разбиение — это просто последовательность [0, 1, 2... rcnt-1]
-    for(int i = 0; i < (int)branch.size(); ++i) node.partition.push_back(i);
+    node.subsumptions = current_subsumptions;
+    
+    vector<int> full_partition(1 << k, -1);
+    for(int i = 0; i < (int)branch.size(); ++i) {
+        full_partition[valid_masks[i]] = i; 
+    }
+    node.partition = full_partition;
     
     return node;
 }
@@ -331,6 +342,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
     vector<int> no_clauses;
     vector<int> masks; // Маска подстановки для оставшихся подстановок
 
+    std::map<int, int> current_subsumptions;
+
     for (int mask = 0; mask < (1 << k); ++mask)
     {
         bool is_subset = false;
@@ -361,12 +374,14 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                     continue;
                 }
 
+                current_subsumptions[mask] = other_mask;
                 is_subset = true;
                 break;
             }
 
             if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
             {
+                current_subsumptions[mask] = other_mask;
                 is_subset = true;
                 break;
             }
@@ -393,13 +408,15 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
 
     vector<int> now_branch;
 
+    vector<GroupWitness> mn_witnesses; 
+
     do
     {
         bool got_zero = false;
-
         now_branch.clear();
-
         bool no_merge_config = false;
+
+        vector<GroupWitness> now_witnesses;
 
         for (int c = 0; c < rcnt; ++c)
         {
@@ -519,9 +536,10 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                 -1; // Количество невыполненных клоз в остальных кроме cross
                     // подстановках (не считая клоз, которые полностью не выполнены)
 
+            int cross_row = -1;
+
             if (partition_size >= 2)
             {
-                int cross_row = -1;
                 bool found_cross = false;
 
                 for (int i = 0; i < rcnt; ++i)
@@ -625,106 +643,15 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                 }
             }
 
-            bool lemma3_2partition = false;
-            bool var2reduce = false;
-            int D = 0;
-
-
             vector<int> best_extra_branch;
             double best_extra_factor = C;
 
-            if (partition_size == 2)
-            {
-                // Пытаемся найти 2- или 3- переменную (2- переменная даст +1, 3-
-                // переменная +(1, 8) по Лемме 3) Перебираемся по выполненным клозам - в
-                // новой формуле единственная переменная будет стоять там, где у двух
-                // подстановок различаются значения в клозе
-
-                int clause_result_xor_mask =
-                    0; // XOR Маска выполненных клоз для данной группы
-
-                for (int i = 0; i < rcnt; ++i)
-                {
-                    if (cs[i] != c)
-                        continue;
-
-                    clause_result_xor_mask ^= rclauses[i];
-                }
-                // Единица будет стоять только на тех местах, где значение отличается,
-                // это нам и нужно
-
-                int var_count = count_set_bits(
-                    clause_result_xor_mask); // Вхождение единственной переменной (так
-                                             // как группировка по двум подстановкам она
-                                             // будет единственной)
-
-                if (var_count == 3)
-                {
-                    lemma3_2partition = true;
-                    // Вообще по Лемме 3 можно побренчить на {1, t}, t:= max(8, 7 + 2|D|),
-                    // где D - это клоза с ¬x если x - (2, 1) Давайте посмотрим сколько
-                    // переменных мы точно знаем из нужной клозы
-
-                    int first_cnt = 0, second_cnt = 0;
-                    int first_last_clause = -1, second_last_clause = -1;
-
-                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
-                    {
-                        if (((clause_result_xor_mask >> cl) & 1) == 1)
-                        {
-                            for (int sub = 0; sub < rcnt; ++sub)
-                            {
-                                if (cs[sub] != c)
-                                    continue;
-
-                                if (((rclauses[sub] >> cl) & 1) == 1)
-                                {
-                                    first_cnt++;
-                                    first_last_clause = cl;
-                                }
-                                else
-                                {
-                                    second_cnt++;
-                                    second_last_clause = cl;
-                                }
-
-                                break;
-                            }
-                        }
-                    }
-
-                    assert(first_cnt == 1 || second_cnt == 1);
-
-                    // Если мы сужаемся на partition_size == 2, то у нас остается всего
-                    // одна переменная
-
-                    if (first_cnt == 1)
-                    {
-                        D = ((this->clauses[first_last_clause]->lits.find(
-                                  &UNKNOWN_NOT_EMPTY_LITERAL) !=
-                              this->clauses[first_last_clause]->lits.end())
-                                 ? 1
-                                 : 0);
-                    }
-                    else if (second_cnt == 1)
-                    {
-                        D = ((this->clauses[second_last_clause]->lits.find(
-                                  &UNKNOWN_NOT_EMPTY_LITERAL) !=
-                              this->clauses[second_last_clause]->lits.end())
-                                 ? 1
-                                 : 0);
-                    }
-                }
-                else if (var_count == 2)
-                {
-                    var2reduce = true;
-                    // Заметим, что в таком случае эти 2 клозы не могут быть одинаковыми,
-                    // т.к. иначе одну из них бы удалили, так как она входит в другую (с
-                    // YES) То есть если при замене мы получаем две клозы с x мы понимаем,
-                    // что одна из подстановок была изначально хуже другой и не должна
-                    // была существовать
-                }
-            }
+            // Переменные для трекинга лемм
+            string best_extra_rule = "";
+            int best_lemma_var_id = -1;
+            int best_lemma_local_D = -1;
+            int best_lemma_pos = -1;
+            int best_lemma_neg = -1;
 
             if (partition_size > 2)
             {
@@ -812,38 +739,29 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                             }
                         }
 
-                        // if (found_clause)
-                        // {
-                        //     vector<int> cand = {1, max(8, 7 + 2 * local_D)};
-                        //     double cand_factor = branching_factor(cand);
-
-                        //     if (cand_factor < best_extra_factor)
-                        //     {
-                        //         best_extra_factor = cand_factor;
-                        //         best_extra_branch = cand;
-                        //     }
-                        // }
-
                         if (found_clause)
                         {
                             vector<int> cand;
+                            string cand_rule;
 
-                            if (lemma3_singletons_cnt >= 2)
-                            {
-                                // double Lemma 3: вместо (1,8) используем (2,9,8)
+                            if (lemma3_singletons_cnt >= 2) {
                                 cand = {2, 9, 8};
-                            }
-                            else
-                            {
+                                cand_rule = "double_lemma3";
+                            } else {
                                 cand = {1, max(8, 7 + 2 * local_D)};
+                                cand_rule = "lemma3";
                             }
 
                             double cand_factor = branching_factor(cand);
 
-                            if (cand_factor < best_extra_factor)
-                            {
+                            if (cand_factor < best_extra_factor) {
                                 best_extra_factor = cand_factor;
                                 best_extra_branch = cand;
+                                best_extra_rule = cand_rule;
+                                best_lemma_var_id = id;
+                                best_lemma_local_D = local_D;
+                                best_lemma_pos = pos;
+                                best_lemma_neg = neg;
                             }
                         }
                     }
@@ -904,10 +822,14 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                             vector<int> cand = {local_i, 1 + 2 * local_D};
                             double cand_factor = branching_factor(cand);
 
-                            if (cand_factor < best_extra_factor)
-                            {
+                            if (cand_factor < best_extra_factor) {
                                 best_extra_factor = cand_factor;
                                 best_extra_branch = cand;
+                                best_extra_rule = "lemma2";
+                                best_lemma_var_id = id;
+                                best_lemma_local_D = local_D;
+                                best_lemma_pos = pos;
+                                best_lemma_neg = neg;
                             }
                         }
                     }
@@ -921,35 +843,26 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                     got_zero = true;
                     break;
                 }
-                // now_branch.push_back(count_set_bits(gclauses) +
-                // count_set_bits(gnoclauses) + abc_reduced);
+                
                 int basic_reduce =
                     count_set_bits(gclauses) + count_set_bits(gnoclauses);
-                // now_branch.push_back(basic_reduce + ());
 
-                // double best_branch_factor = branching_factor();
+                GroupWitness gw;
+                gw.basic_reduce_val = basic_reduce;
 
-                // lemma3_2partition = false;
-
-                if (var2reduce)
-                {
-                    now_branch.push_back(basic_reduce + 1);
-                }
-                else if (cross_reduce && cross_size <= 2)
+                if (cross_reduce && cross_size <= 2)
                 {
                     if (cross_size == 1)
                         now_branch.push_back(basic_reduce + 1);
-                    else if (cross_size == 2)
+                    else
                     {
                         now_branch.push_back(basic_reduce + 1);
                         now_branch.push_back(basic_reduce + 8);
                     }
-                }
-                else if (lemma3_2partition)
-                {
-                    now_branch.push_back(basic_reduce + 1);
-                    // now_branch.push_back(basic_reduce + 8); // max(8, 7 + 2 * D));
-                    now_branch.push_back(basic_reduce + max(8, 7 + 2 * D));
+
+                    gw.rule = "cross_reduce";
+                    gw.cross_row_idx = cross_row;
+                    gw.cross_size = cross_size;
                 }
                 else if (!best_extra_branch.empty())
                 {
@@ -957,11 +870,21 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                     {
                         now_branch.push_back(basic_reduce + x);
                     }
+
+                    gw.rule = best_extra_rule;
+                    gw.lemma_var_id = best_lemma_var_id;
+                    gw.lemma_local_D = best_lemma_local_D;
+                    gw.lemma_pos_count = best_lemma_pos;
+                    gw.lemma_neg_count = best_lemma_neg;
+                
                 }
                 else
                 {
                     now_branch.push_back(basic_reduce);
+                    gw.rule = "basic";
                 }
+
+                now_witnesses.push_back(gw);
             }
         }
 
@@ -977,6 +900,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
             mn_factor = now_factor;
             mn_branch = now_branch;
             mn_partition = cs;
+            mn_witnesses = now_witnesses;
         }
 
     } while (is_3_case ? get_next_3_partition_fast(cs, mask_of_reduced_subsets)
@@ -988,9 +912,19 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
     node.type = "leaf";
     node.vec = mn_branch;
     node.tau = mn_factor;
-    node.partition = mn_partition;
-    node.formula_snapshot = this->get_snapshot();
+
+    // node.partition = mn_partition;
     
+    vector<int> full_partition(1 << k, -1);
+    for(int i = 0; i < rcnt; ++i) {
+        full_partition[masks[i]] = mn_partition[i];
+    }
+    node.partition = full_partition;
+    
+    node.formula_snapshot = this->get_snapshot();
+    node.subsumptions = current_subsumptions;
+    node.group_witnesses = mn_witnesses;
+
     return node;
 }
 

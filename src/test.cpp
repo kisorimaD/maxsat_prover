@@ -43,7 +43,7 @@ void dump_proof_tree(const ProofNode& node, const string& id_prefix) {
     CNF* dummy = create_dummy_cnf(node.formula_snapshot);
 
     if (node.type == "leaf") {
-        global_logger.log_leaf(id_prefix, node.vec, node.tau, dummy, node.partition);
+        global_logger.log_leaf(id_prefix, node.vec, node.tau, dummy, node.partition, node.subsumptions, node.group_witnesses);
     } 
 
     else if (node.type == "reduction") {
