@@ -122,16 +122,9 @@ class CNF
 {
 
 public:
-    CNF() {}
+    CNF();
 
-    CNF(CNF &cnf)
-    {
-        clauses.resize(cnf.clauses.size());
-        for (int i = 0; i < (int)clauses.size(); ++i)
-        {
-            clauses[i] = new Clause(*cnf.clauses[i]);
-        }
-    }
+    CNF(CNF &cnf);
 
     // ~CNF()
     // {
@@ -149,8 +142,9 @@ public:
 
     std::vector<std::vector<int>> get_snapshot();
 
-    vector<Clause *> clauses;
+    long long node_id;
 
+    vector<Clause *> clauses;
 
 };
 

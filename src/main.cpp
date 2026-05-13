@@ -1,6 +1,7 @@
 #include "cnf.h"
 #include "test.h"
-#include "solver.h"
+#include "cert_logger.h"
+
 #include <iostream>
 #include <functional>
 
@@ -31,7 +32,6 @@ void fill_test_names()
     test_names["3branch"] = test_branch_three_vars;
     test_names["factor"] = test_branching_factor;
     test_names["subset"] = test_subset_func;
-    test_names["start"] = solve;
     test_names["addvar"] = test_add_new_var;
     test_names["nounknown"] = test_no_unknown_literal;
     test_names["test"] = test_universal;
@@ -42,6 +42,8 @@ void fill_test_names()
 
 int main(int argc, const char *argv[])
 {
+    global_logger.init("pre_certificate.jsonl");
+
     preprocess();
     fill_test_names();
 

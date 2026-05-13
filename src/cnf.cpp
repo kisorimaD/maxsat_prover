@@ -1,4 +1,6 @@
 #include "cnf.h"
+#include "cert_logger.h"
+
 #include <algorithm>
 #include <assert.h>
 #include <fstream>
@@ -53,13 +55,35 @@ Literal::Literal(int _id, bool is_inv)
 
 Literal Literal::neg() const { return Literal(id, !inv); }
 
-std::vector<std::vector<int>> CNF::get_snapshot() {
+long long GLOBAL_NODE_ID_COUNTER = 0;
+
+CNF::CNF()
+{
+    node_id = ++GLOBAL_NODE_ID_COUNTER;
+}
+
+CNF::CNF(CNF &cnf)
+{
+    node_id = ++GLOBAL_NODE_ID_COUNTER;
+    clauses.resize(cnf.clauses.size());
+    for (int i = 0; i < (int)clauses.size(); ++i)
+    {
+        clauses[i] = new Clause(*cnf.clauses[i]);
+    }
+}
+
+std::vector<std::vector<int>> CNF::get_snapshot()
+{
     std::vector<std::vector<int>> snap;
-    for (Clause* c : clauses) {
+    for (Clause *c : clauses)
+    {
         std::vector<int> cl_snap;
-        for (Literal* l : c->lits) {
-            if (l->id == 0 || l->id == 1) cl_snap.push_back(l->id);
-            else cl_snap.push_back((l->inv ? -1 : 1) * l->id);
+        for (Literal *l : c->lits)
+        {
+            if (l->id == 0 || l->id == 1)
+                cl_snap.push_back(l->id);
+            else
+                cl_snap.push_back((l->inv ? -1 : 1) * l->id);
         }
         snap.push_back(cl_snap);
     }
@@ -195,14 +219,14 @@ ProofNode CNF::branch(vector<int> ids)
                     continue;
                 }
 
-                current_subsumptions[mask] = other_mask; 
+                current_subsumptions[mask] = other_mask;
                 is_subset = true;
                 break;
             }
 
             if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
             {
-                current_subsumptions[mask] = other_mask; 
+                current_subsumptions[mask] = other_mask;
                 is_subset = true;
                 break;
             }
@@ -218,13 +242,14 @@ ProofNode CNF::branch(vector<int> ids)
     ProofNode node(branch);
     node.formula_snapshot = this->get_snapshot();
     node.subsumptions = current_subsumptions;
-    
+
     vector<int> full_partition(1 << k, -1);
-    for(int i = 0; i < (int)branch.size(); ++i) {
-        full_partition[valid_masks[i]] = i; 
+    for (int i = 0; i < (int)branch.size(); ++i)
+    {
+        full_partition[valid_masks[i]] = i;
     }
     node.partition = full_partition;
-    
+
     return node;
 }
 
@@ -408,7 +433,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
 
     vector<int> now_branch;
 
-    vector<GroupWitness> mn_witnesses; 
+    vector<GroupWitness> mn_witnesses;
 
     do
     {
@@ -496,7 +521,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
 
                 int group_size = group_masks.size();
 
-                // Быстрая проверка (Fast-fail): 
+                // Быстрая проверка (Fast-fail):
                 // Размер любого аффинного подпространства в GF(2) обязан быть степенью двойки (1, 2, 4, 8...).
                 // Если это не так (например, 3 элемента), это точно не валидная группа.
                 if (group_size > 0 && (group_size & (group_size - 1)) != 0)
@@ -744,17 +769,21 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                             vector<int> cand;
                             string cand_rule;
 
-                            if (lemma3_singletons_cnt >= 2) {
+                            if (lemma3_singletons_cnt >= 2)
+                            {
                                 cand = {2, 9, 8};
                                 cand_rule = "double_lemma3";
-                            } else {
+                            }
+                            else
+                            {
                                 cand = {1, max(8, 7 + 2 * local_D)};
                                 cand_rule = "lemma3";
                             }
 
                             double cand_factor = branching_factor(cand);
 
-                            if (cand_factor < best_extra_factor) {
+                            if (cand_factor < best_extra_factor)
+                            {
                                 best_extra_factor = cand_factor;
                                 best_extra_branch = cand;
                                 best_extra_rule = cand_rule;
@@ -822,7 +851,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                             vector<int> cand = {local_i, 1 + 2 * local_D};
                             double cand_factor = branching_factor(cand);
 
-                            if (cand_factor < best_extra_factor) {
+                            if (cand_factor < best_extra_factor)
+                            {
                                 best_extra_factor = cand_factor;
                                 best_extra_branch = cand;
                                 best_extra_rule = "lemma2";
@@ -843,7 +873,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                     got_zero = true;
                     break;
                 }
-                
+
                 int basic_reduce =
                     count_set_bits(gclauses) + count_set_bits(gnoclauses);
 
@@ -876,7 +906,6 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                     gw.lemma_local_D = best_lemma_local_D;
                     gw.lemma_pos_count = best_lemma_pos;
                     gw.lemma_neg_count = best_lemma_neg;
-                
                 }
                 else
                 {
@@ -906,7 +935,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
     } while (is_3_case ? get_next_3_partition_fast(cs, mask_of_reduced_subsets)
                        : get_next_partition(cs, max_partitions));
 
-    if (mn_branch.empty()) return ProofNode({0});
+    if (mn_branch.empty())
+        return ProofNode({0});
 
     ProofNode node;
     node.type = "leaf";
@@ -914,13 +944,14 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
     node.tau = mn_factor;
 
     // node.partition = mn_partition;
-    
+
     vector<int> full_partition(1 << k, -1);
-    for(int i = 0; i < rcnt; ++i) {
+    for (int i = 0; i < rcnt; ++i)
+    {
         full_partition[masks[i]] = mn_partition[i];
     }
     node.partition = full_partition;
-    
+
     node.formula_snapshot = this->get_snapshot();
     node.subsumptions = current_subsumptions;
     node.group_witnesses = mn_witnesses;
@@ -1182,7 +1213,7 @@ string cnf_to_max_string(CNF *cnf)
 
 vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                                     LitType type, int pos = -1,
-                                    bool only_pos = false)
+                                    bool only_pos = false, bool silent = false)
 {
     // a + b = s
     // В 0 <= a <= i клозах литерал встречается с x
@@ -1344,6 +1375,13 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
         } while (prev_permutation(m.begin(), m.end()));
     }
 
+    if (!silent) {
+        vector<long long> children_ids;
+        for (CNF* child : ans) children_ids.push_back(child->node_id);
+        
+        global_logger.log_add_variable(cnf->node_id, cnf->get_snapshot(), VAR2ID[v_name], i, j, children_ids);
+    }
+
     return ans;
 }
 
@@ -1368,7 +1406,7 @@ add_new_var_in_place(CNF *cnf, string v_name,
     for (LiteralDegType l : variants)
     {
         auto new_vars =
-            add_new_var_universal(cnf, v_name, l.i, l.j, l.type, pos, true);
+            add_new_var_universal(cnf, v_name, l.i, l.j, l.type, pos, true, true);
         ans.resize(ans.size() + new_vars.size());
         copy(new_vars.begin(), new_vars.end(), ans.rbegin());
     }
@@ -1385,6 +1423,11 @@ add_new_var_in_place(CNF *cnf, string v_name,
     if (cnf_empty_space->clauses.size() != 0)
         ans.push_back(cnf_empty_space);
 
+    vector<long long> children_ids;
+    for (CNF* child : ans) children_ids.push_back(child->node_id);
+    
+    global_logger.log_addpos(cnf->node_id, cnf->get_snapshot(), VAR2ID[v_name], pos, children_ids);
+
     return ans;
 }
 
@@ -1395,8 +1438,10 @@ DivideResult empty_divide(CNF *cnf)
     double min_worst_factor = std::numeric_limits<double>::infinity();
 
     vector<int> ids;
-    for (auto p : ID2VAR) {
-        if (p.first != UNKNOWN_LITERAL.id && p.first != UNKNOWN_NOT_EMPTY_LITERAL.id) {
+    for (auto p : ID2VAR)
+    {
+        if (p.first != UNKNOWN_LITERAL.id && p.first != UNKNOWN_NOT_EMPTY_LITERAL.id)
+        {
             ids.push_back(p.first);
         }
     }
@@ -1434,8 +1479,10 @@ DivideResult empty_divide(CNF *cnf)
                 min_worst_factor = worst_factor;
 
                 // Очищаем предыдущий лучший вариант
-                if (best_split.cnf_empty) delete best_split.cnf_empty;
-                if (best_split.cnf_not_empty) delete best_split.cnf_not_empty;
+                if (best_split.cnf_empty)
+                    delete best_split.cnf_empty;
+                if (best_split.cnf_not_empty)
+                    delete best_split.cnf_not_empty;
 
                 best_split.clause_idx = i;
                 best_split.cnf_empty = cnf_empty;
@@ -1456,6 +1503,8 @@ DivideResult empty_divide(CNF *cnf)
             }
         }
     }
+
+    global_logger.log_divide(cnf->node_id, cnf->get_snapshot(), best_split.proof_tree.target_clause_idx, best_split.cnf_empty->node_id, best_split.cnf_not_empty->node_id);
 
     return best_split;
 }

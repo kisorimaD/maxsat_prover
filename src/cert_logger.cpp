@@ -1,193 +1,154 @@
 #include "cert_logger.h"
-#include "cnf.h"
+#include <sstream>
+#include <iostream>
+#include <fstream>
 
-TreeLogger global_logger("proof_tree.json", 1.2872);
+// Глобальный экземпляр логгера
+CertLogger global_logger;
+std::ofstream out;
 
-TreeLogger::TreeLogger(const std::string& filename, double target_bound) {
-    out.open(filename);
-    indent_level = 0;
-    needs_comma = false;
-    out << "{\n  \"universe\": {\"target_bound\": " << target_bound << "},\n  \"proof_tree\": [\n";
-}
-
-TreeLogger::~TreeLogger() {
-    out << "\n  ]\n}\n";
-    out.close();
-}
-
-void TreeLogger::print_indent() {
-    for(int i = 0; i < indent_level; ++i) out << "  ";
-}   
-
-void TreeLogger::write_formula(CNF* cnf) {
-    out << "[";
-    for (size_t i = 0; i < cnf->clauses.size(); ++i) {
-        if (i > 0) out << ", ";
-        out << "[";
-        // for (size_t j = 0; j < cnf->clauses[i]->lits.size(); ++j) {
-        bool first_flag = true;
-        for(Literal* lit : cnf->clauses[i]->lits)
-        {
-            if (!first_flag) 
-                out << ", ";
-            else
-                first_flag = false;
-            
-            int lit_id = lit->id;
-            bool inv = lit->inv;
-            if (lit_id == 0 || lit_id == 1) {
-                out << lit_id; // Вывод маркеров 0 и 1 без инверсии
-            } else {
-                out << (inv? "-" : "") << lit_id;
-            }
-        }
-        out << "]";
+void CertLogger::init(const std::string& filename) {
+    out.open(filename, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        std::cerr << "Не удалось открыть файл для логов: " << filename << std::endl;
     }
-    out << "]";
 }
 
-TreeLogger::NodeScope TreeLogger::open_node() {
-    if (needs_comma) out << ",\n";
-    print_indent();
-    out << "{\n";
-    indent_level++;
-    needs_comma = false;
-    return NodeScope(*this);
+void CertLogger::close() {
+    if (out.is_open()) {
+        out.close();
+    }
 }
 
-void TreeLogger::close_node() {
-    indent_level--;
-    out << "\n";
-    print_indent();
-    out << "}";
-    needs_comma = true;
+// Конвертация снимка формулы в строку формата JSON (массив массивов)
+std::string CertLogger::formula_to_json(const std::vector<std::vector<int>>& snap) {
+    std::ostringstream ss;
+    ss << "[";
+    for (size_t i = 0; i < snap.size(); ++i) {
+        ss << "[";
+        for (size_t j = 0; j < snap[i].size(); ++j) {
+            ss << snap[i][j];
+            if (j + 1 < snap[i].size()) ss << ", ";
+        }
+        ss << "]";
+        if (i + 1 < snap.size()) ss << ", ";
+    }
+    ss << "]";
+    return ss.str();
 }
 
-// Замените старый begin_children на этот (добавлена открывающая скобка массива):
-void TreeLogger::begin_children() {
-    if (needs_comma) out << ",\n";
-    print_indent(); out << "\"children\": [\n";
-    needs_comma = false;
+void CertLogger::log_add_variable(long long parent_id, const std::vector<std::vector<int>>& snap, int var_id, int pos_deg, int neg_deg, const std::vector<long long>& children_ids) {
+    if (!out.is_open()) return;
+
+    std::ostringstream ss;
+    ss << "{\"parent_id\": " << parent_id << ", "
+       << "\"type\": \"add_variable\", "
+       << "\"formula\": " << formula_to_json(snap) << ", "
+       << "\"added_variable_id\": " << var_id << ", "
+       << "\"pos_deg\": " << pos_deg << ", "
+       << "\"neg_deg\": " << neg_deg << ", "
+       << "\"children_ids\": [";
+    for (size_t i = 0; i < children_ids.size(); ++i) {
+        ss << children_ids[i];
+        if (i + 1 < children_ids.size()) ss << ", ";
+    }
+    ss << "]}\n";
+    out << ss.str();
+    out.flush();
 }
 
-void TreeLogger::end_children() {
-    out << "\n";
-    print_indent(); out << "]";
-    needs_comma = true;
+void CertLogger::log_addpos(long long parent_id, const std::vector<std::vector<int>>& snap, int var_id, int target_pos, const std::vector<long long>& children_ids) {
+    if (!out.is_open()) return;
+
+    std::ostringstream ss;
+    ss << "{\"parent_id\": " << parent_id << ", "
+       << "\"type\": \"addpos\", "
+       << "\"formula\": " << formula_to_json(snap) << ", "
+       << "\"added_variable_id\": " << var_id << ", "
+       << "\"target_clause_idx\": " << target_pos << ", "
+       << "\"children_ids\": [";
+    for (size_t i = 0; i < children_ids.size(); ++i) {
+        ss << children_ids[i];
+        if (i + 1 < children_ids.size()) ss << ", ";
+    }
+    ss << "]}\n";
+    out << ss.str();
+    out.flush();
 }
 
-void TreeLogger::log_divide(const std::string& id, int clause_idx, CNF* cnf) {
-    print_indent(); out << "\"node_id\": \"" << id << "\",\n";
-    print_indent(); out << "\"type\": \"divide_clause\",\n";
-    print_indent(); out << "\"target_clause_idx\": " << clause_idx << ",\n";
-    print_indent(); out << "\"formula\": "; 
-    if (cnf) write_formula(cnf); else out << "[]"; 
-    out << "\n";
-    needs_comma = true;
+// Логирование операции разделения клозы (макро-уровень)
+void CertLogger::log_divide(long long parent_id, const std::vector<std::vector<int>>& snap, int target_idx, long long child_empty, long long child_not_empty) {
+    if (!out.is_open()) return;
+
+    std::ostringstream ss;
+    ss << "{\"parent_id\": " << parent_id << ", "
+       << "\"type\": \"macro_divide_clause\", "
+       << "\"formula\": " << formula_to_json(snap) << ", "
+       << "\"target_clause_idx\": " << target_idx << ", "
+       << "\"children_ids\": [" << child_empty << ", " << child_not_empty << "]}\n";
+       
+    out << ss.str();
+    out.flush();
 }
 
-void TreeLogger::log_branch(const std::string& id, int pivot, CNF* cnf) {
-    print_indent(); out << "\"node_id\": \"" << id << "\",\n";
-    print_indent(); out << "\"type\": \"branch\",\n";
-    print_indent(); out << "\"branching_variable\": " << pivot << ",\n";
-    print_indent(); out << "\"formula\": "; 
-    if (cnf) write_formula(cnf); else out << "[]"; 
-    out << "\n";
-    needs_comma = true;
-}
-
-void TreeLogger::log_add_var(const std::string& id, int var_id, int pos_deg, int neg_deg, CNF* cnf) {
-    print_indent(); out << "\"node_id\": \"" << id << "\",\n";
-    print_indent(); out << "\"type\": \"add_variable\",\n";
-    print_indent(); out << "\"added_variable_id\": " << var_id << ",\n";
-    print_indent(); out << "\"pos_deg\": " << pos_deg << ",\n";
-    print_indent(); out << "\"neg_deg\": " << neg_deg << ",\n";
-    print_indent(); out << "\"formula\": "; write_formula(cnf); out << "\n";
-    needs_comma = true;
-}
-
-void TreeLogger::log_reduction(const std::string& id, const std::string& rule, int pivot, CNF* cnf, const std::vector<int>& rr_witness_clauses) {
-    print_indent(); out << "\"node_id\": \"" << id << "\",\n";
-    print_indent(); out << "\"type\": \"reduction\",\n";
-    print_indent(); out << "\"rule\": \"" << rule << "\",\n";
-    print_indent(); out << "\"pivot_id\": " << pivot << ",\n";
+// Рекурсивный обход терминального дерева (микро-уровень)
+std::string CertLogger::proof_node_to_json(const ProofNode& node) {
+    std::ostringstream ss;
+    ss << "{";
     
-    if (!rr_witness_clauses.empty()) {
-        print_indent(); out << "\"rr_witness_clauses\": [";
-        for(size_t i=0; i<rr_witness_clauses.size(); ++i) { 
-            if(i>0) out << ","; 
-            out << rr_witness_clauses[i]; 
+    // Lean 4 ожидает node_id как строку
+    ss << "\"node_id\": \"micro_node\", "; 
+    ss << "\"type\": \"" << node.type << "\", ";
+    ss << "\"formula\": " << formula_to_json(node.formula_snapshot) << ", ";
+
+    // Специфичные поля в зависимости от типа узла (согласно test.Lean)
+    if (node.type == "leaf") {
+        ss << "\"tau\": " << node.tau << ", ";
+        ss << "\"vector\": [";
+        for (size_t i = 0; i < node.vec.size(); ++i) {
+            ss << node.vec[i];
+            if (i + 1 < node.vec.size()) ss << ", ";
         }
-        out << "],\n";
+        ss << "], ";
+    } 
+    else if (node.type == "divide_clause") {
+        ss << "\"target_clause_idx\": " << node.target_clause_idx << ", ";
+    } 
+    else if (node.type == "branch") {
+        ss << "\"branching_variable\": " << node.pivot_id << ", ";
+    } 
+    else if (node.type == "reduction") {
+        ss << "\"rule\": \"" << node.rule << "\", ";
+        ss << "\"pivot_id\": " << node.pivot_id << ", ";
+    } 
+    else if (node.type == "add_variable") {
+        // Если вдруг add_variable окажется внутри микро-дерева
+        ss << "\"added_variable_id\": " << node.pivot_id << ", ";
+        ss << "\"pos_deg\": 0, "; // Дефолтные значения, если их нет в C++ ProofNode
+        ss << "\"neg_deg\": 0, ";
     }
 
-    print_indent(); out << "\"formula\": "; 
-    if (cnf) write_formula(cnf); else out << "[]"; 
-    out << "\n";
-    needs_comma = true;
+    // Рекурсивный вызов для потомков
+    ss << "\"children\": [";
+    for (size_t i = 0; i < node.children.size(); ++i) {
+        ss << proof_node_to_json(node.children[i]);
+        if (i + 1 < node.children.size()) ss << ", ";
+    }
+    ss << "]";
+
+    ss << "}";
+    return ss.str();
 }
 
-void TreeLogger::log_leaf(const std::string& id, const std::vector<int>& vec, double tau, CNF* cnf, const std::vector<int>& partition, const std::map<int, int>& subsumptions, const std::vector<GroupWitness>& group_witnesses) {
-    print_indent(); out << "\"node_id\": \"" << id << "\",\n";
-    print_indent(); out << "\"type\": \"leaf\",\n";
-    
-    print_indent(); out << "\"vector\": [";
-    for(size_t i=0; i<vec.size(); ++i) { if(i>0) out<<","; out<<vec[i]; }
-    out << "],\n";
-    
-    print_indent(); out << "\"partition\": [";
-    for(size_t i=0; i<partition.size(); ++i) { if(i>0) out<<","; out<<partition[i]; }
-    out << "],\n";
+// Логирование корня доказанного микро-дерева
+void CertLogger::log_proof_tree(long long parent_id, const ProofNode& root_node) {
+    if (!out.is_open()) return;
 
-    if (!subsumptions.empty()) {
-        print_indent(); out << "\"subsumptions\": {\n";
-        indent_level++;
-        bool first = true;
-        for (const auto& pair : subsumptions) {
-            if (!first) out << ",\n";
-            first = false;
-            print_indent(); out << "\"" << pair.first << "\": " << pair.second;
-        }
-        out << "\n";
-        indent_level--;
-        print_indent(); out << "},\n";
-    }
-
-    if (!group_witnesses.empty()) {
-        print_indent(); out << "\"group_witnesses\": [\n";
-        indent_level++;
-        for(size_t i=0; i<group_witnesses.size(); ++i) {
-            if(i>0) out << ",\n";
-            print_indent(); out << "{\n";
-            indent_level++;
-            
-            print_indent(); out << "\"rule\": \"" << group_witnesses[i].rule << "\",\n";
-            print_indent(); out << "\"basic_reduce_val\": " << group_witnesses[i].basic_reduce_val;
-            
-            if (group_witnesses[i].rule == "cross_reduce") {
-                out << ",\n";
-                print_indent(); out << "\"cross_row_idx\": " << group_witnesses[i].cross_row_idx << ",\n";
-                print_indent(); out << "\"cross_size\": " << group_witnesses[i].cross_size;
-            } else if (group_witnesses[i].rule == "lemma2" || group_witnesses[i].rule == "lemma3" || group_witnesses[i].rule == "double_lemma3") {
-                out << ",\n";
-                print_indent(); out << "\"lemma_var_id\": " << group_witnesses[i].lemma_var_id << ",\n";
-                print_indent(); out << "\"lemma_local_D\": " << group_witnesses[i].lemma_local_D << ",\n";
-                print_indent(); out << "\"lemma_pos_count\": " << group_witnesses[i].lemma_pos_count << ",\n";
-                print_indent(); out << "\"lemma_neg_count\": " << group_witnesses[i].lemma_neg_count;
-            }
-            out << "\n";
-            
-            indent_level--;
-            print_indent(); out << "}";
-        }
-        out << "\n";
-        indent_level--;
-        print_indent(); out << "],\n";
-    }
-
-    print_indent(); out << "\"tau\": " << tau << ",\n";
-    print_indent(); out << "\"formula\": "; 
-    if (cnf) write_formula(cnf); else out << "[]"; 
-    out << "\n";
-    needs_comma = true;
+    std::ostringstream ss;
+    ss << "{\"parent_id\": " << parent_id << ", "
+       << "\"type\": \"proof_tree\", "
+       << "\"proof_node\": " << proof_node_to_json(root_node) << "}\n";
+       
+    out << ss.str();
+    out.flush();
 }

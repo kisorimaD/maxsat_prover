@@ -1,50 +1,32 @@
-#ifndef CERT_LOGGER_H
-#define CERT_LOGGER_H
-
-#include <iostream>
-#include <fstream>
-#include <vector>
+#pragma once
+#include "cnf.h"
 #include <string>
-#include <map>
-#include <cnf.h>
+#include <vector>
+#include <fstream>
 
-class CNF; // Предварительное объявление графа формулы
 
-class TreeLogger {
-private:
-    std::ofstream out;
-    int indent_level;
-    bool needs_comma;
-
-    void print_indent();
-    void write_formula(CNF* cnf);
-
+class CertLogger {
 public:
-    TreeLogger(const std::string& filename, double target_bound);
-    ~TreeLogger();
+    void init(const std::string& filename);
+    void close();
 
-    // Класс-обертка для управления жизненным циклом узла JSON
-    class NodeScope {
-        TreeLogger& logger;
-    public:
-        NodeScope(TreeLogger& l) : logger(l) {}
-        ~NodeScope() { logger.close_node(); }
-    };
-
-    NodeScope open_node();
-    void close_node();
+    // Логирование операции добавления переменной с известными степенями
+    void log_add_variable(long long parent_id, const std::vector<std::vector<int>>& snap, int var_id, int pos_deg, int neg_deg, const std::vector<long long>& children_ids);
     
-    void begin_children();
-    void end_children();
+    // Логирование целевого макро-добавления (addpos)
+    void log_addpos(long long parent_id, const std::vector<std::vector<int>>& snap, int var_id, int target_pos, const std::vector<long long>& children_ids);
+    
+    // Логирование макро-разделения (empty_divide)
+    void log_divide(long long parent_id, const std::vector<std::vector<int>>& snap, int target_idx, long long child_empty, long long child_not_empty);
+    
+    // Логирование терминального микро-доказательства
+    void log_proof_tree(long long parent_id, const ProofNode& root_node);
 
-    // Методы регистрации грануляции
-    void log_add_var(const std::string& id, int var_id, int pos_deg, int neg_deg, CNF* cnf);
-    void log_divide(const std::string& id, int clause_idx, CNF* cnf);
-    void log_reduction(const std::string& id, const std::string& rule, int pivot, CNF* cnf, const std::vector<int>& rr_witness_clauses = {});
-    void log_branch(const std::string& id, int pivot, CNF* cnf);
-    void log_leaf(const std::string& id, const std::vector<int>& vec, double tau, CNF* cnf, const std::vector<int>& partition, const std::map<int, int>& subsumptions = {}, const std::vector<GroupWitness>& group_witnesses = {});
+private:
+    std::string formula_to_json(const std::vector<std::vector<int>>& snap);
+    std::string proof_node_to_json(const ProofNode& node);
 };
 
-extern TreeLogger global_logger;
+extern std::ofstream out;
 
-#endif
+extern CertLogger global_logger;
