@@ -1099,11 +1099,11 @@ void print_cnf(CNF &cnf)
     cout << endl;
 }
 
-unordered_set<string> *used;
+unordered_map<string, long long> *used_nodes;
 
 void preprocess(int maximum_clause_size)
 {
-    used = (new unordered_set<string>());
+    used_nodes = new unordered_map<string, long long>();
     ID2VAR[0] = "?";
     VAR2ID["?"] = 0;
     ID2VAR[1] = "?+";
@@ -1209,11 +1209,10 @@ string cnf_to_max_string(CNF *cnf)
     return max_str;
 }
 
-// set<string> used;
-
 vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
-                                    LitType type, int pos = -1,
-                                    bool only_pos = false, bool silent = false)
+                                    LitType type, int pos,
+                                    bool only_pos, bool silent,
+                                    vector<long long> &out_children_ids)
 {
     // a + b = s
     // В 0 <= a <= i клозах литерал встречается с x
@@ -1238,7 +1237,7 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
 
         do
         {
-            for (int a = 0; a <= min(i, s); ++a)
+            for (int a = max(0, s - j); a <= min(i, s); ++a)
             {
                 if (type == SINGLETON && s != a)
                     continue;
@@ -1361,10 +1360,17 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
 
                     string now_cnf_str = cnf_to_max_string(now_cnf);
 
-                    if (used->find(now_cnf_str) == used->end())
+                    if (used_nodes->find(now_cnf_str) == used_nodes->end())
                     {
                         ans.push_back(now_cnf);
-                        used->insert(now_cnf_str);
+                        (*used_nodes)[now_cnf_str] = now_cnf->node_id;
+                        out_children_ids.push_back(now_cnf->node_id); // Сохраняем ID нового графа
+                    }
+                    else
+                    {
+                        // Граф изоморфен! Линкуем родителя со старым узлом, чтобы не рвать топологию
+                        out_children_ids.push_back((*used_nodes)[now_cnf_str]);
+                        delete now_cnf; // Заодно чиним утечку памяти
                     }
 
                     // ans.push_back(now_cnf);
@@ -1375,11 +1381,16 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
         } while (prev_permutation(m.begin(), m.end()));
     }
 
-    if (!silent) {
-        vector<long long> children_ids;
-        for (CNF* child : ans) children_ids.push_back(child->node_id);
-        
-        global_logger.log_add_variable(cnf->node_id, cnf->get_snapshot(), VAR2ID[v_name], i, j, children_ids);
+    if (!silent)
+    {
+        vector<long long> unique_children_ids;
+        unordered_set<long long> seen;
+        for (long long id : out_children_ids) {
+            if (seen.insert(id).second) {
+                unique_children_ids.push_back(id);
+            }
+        }
+        global_logger.log_add_variable(cnf->node_id, cnf->get_snapshot(), VAR2ID[v_name], i, j, unique_children_ids);
     }
 
     return ans;
@@ -1387,7 +1398,8 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
 
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 {
-    return add_new_var_universal(cnf, v_name, i, j, type);
+    vector<long long> dummy_ids;
+    return add_new_var_universal(cnf, v_name, i, j, type, -1, false, false, dummy_ids);
 }
 
 vector<CNF *>
@@ -1399,16 +1411,11 @@ add_new_var_in_place(CNF *cnf, string v_name,
 
     vector<CNF *> ans;
 
-    // auto new_vars = add_new_var(cnf, var_name, i, j, new_type);
-    // new_lit_variants.resize(new_lit_variants.size() + new_vars.size());
-    // copy(new_vars.begin(), new_vars.end(), new_lit_variants.rbegin());
-
-    for (LiteralDegType l : variants)
-    {
-        auto new_vars =
-            add_new_var_universal(cnf, v_name, l.i, l.j, l.type, pos, true, true);
-        ans.resize(ans.size() + new_vars.size());
-        copy(new_vars.begin(), new_vars.end(), ans.rbegin());
+    vector<long long> all_children_ids;
+    
+    for (LiteralDegType l : variants) {
+        auto new_vars = add_new_var_universal(cnf, v_name, l.i, l.j, l.type, pos, true, true, all_children_ids);
+        ans.insert(ans.end(), new_vars.begin(), new_vars.end());
     }
 
     CNF *cnf_empty_space = new CNF(*cnf);
@@ -1420,13 +1427,20 @@ add_new_var_in_place(CNF *cnf, string v_name,
         cnf_empty_space->clauses[pos]->lits.erase(&UNKNOWN_LITERAL);
     }
 
-    if (cnf_empty_space->clauses.size() != 0)
+    if (cnf_empty_space->clauses.size() != 0) {
         ans.push_back(cnf_empty_space);
+        all_children_ids.push_back(cnf_empty_space->node_id);
+    }
 
-    vector<long long> children_ids;
-    for (CNF* child : ans) children_ids.push_back(child->node_id);
-    
-    global_logger.log_addpos(cnf->node_id, cnf->get_snapshot(), VAR2ID[v_name], pos, children_ids);
+    vector<long long> unique_children_ids;
+    unordered_set<long long> seen;
+    for (long long id : all_children_ids) {
+        if (seen.insert(id).second) {
+            unique_children_ids.push_back(id);
+        }
+    }
+
+    global_logger.log_addpos(cnf->node_id, cnf->get_snapshot(), VAR2ID[v_name], pos, unique_children_ids);
 
     return ans;
 }
