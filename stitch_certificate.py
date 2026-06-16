@@ -18,18 +18,30 @@ def assemble_certificate(input_file, output_file):
                 record = json.loads(line)
                 parent_id = str(record["parent_id"])
 
-                if record["type"] == "macro_add_variable":
+                if record["type"] == "add_variable":  # Исправлено с "macro_add_variable"
                     nodes[parent_id] = {
                         "node_id": parent_id,
                         "type": "add_variable",
                         "formula": record["formula"],
                         "added_variable_id": record.get("added_variable_id", 0),
-                        "pos_deg": 3, # Значение по умолчанию для (3,2)-литерала (требует Lean 4)
-                        "neg_deg": 2, 
+                        # Берем реальные значения из лога вместо хардкода
+                        "pos_deg": record.get("pos_deg", 3), 
+                        "neg_deg": record.get("neg_deg", 2), 
                         "children_ids": [str(c) for c in record["children_ids"]]
                     }
                     all_children.update(nodes[parent_id]["children_ids"])
 
+                elif record["type"] == "addpos":  # Добавлен парсинг для addpos
+                    nodes[parent_id] = {
+                        "node_id": parent_id,
+                        "type": "addpos",
+                        "formula": record["formula"],
+                        "added_variable_id": record.get("added_variable_id", 0),
+                        "target_clause_idx": record["target_clause_idx"],
+                        "children_ids": [str(c) for c in record["children_ids"]]
+                    }
+                    all_children.update(nodes[parent_id]["children_ids"])
+                    
                 elif record["type"] == "macro_divide_clause":
                     nodes[parent_id] = {
                         "node_id": parent_id,
