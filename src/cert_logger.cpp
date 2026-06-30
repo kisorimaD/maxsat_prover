@@ -98,11 +98,16 @@ std::string CertLogger::proof_node_to_json(const ProofNode& node) {
     
     // Lean 4 ожидает node_id как строку
     ss << "\"node_id\": \"micro_node\", "; 
-    ss << "\"type\": \"" << node.type << "\", ";
+    
+    std::string logged_type = node.type;
+    if (node.type == "leaf" && node.vec.size() == 1 && node.vec[0] == 0 && node.tau >= 99.0) {
+        logged_type = "stop";
+    }
+    ss << "\"type\": \"" << logged_type << "\", ";
     ss << "\"formula\": " << formula_to_json(node.formula_snapshot) << ", ";
 
     // Специфичные поля в зависимости от типа узла (согласно test.Lean)
-    if (node.type == "leaf") {
+    if (logged_type == "leaf") {
         ss << "\"tau\": " << node.tau << ", ";
         ss << "\"vector\": [";
         for (size_t i = 0; i < node.vec.size(); ++i) {
@@ -110,18 +115,59 @@ std::string CertLogger::proof_node_to_json(const ProofNode& node) {
             if (i + 1 < node.vec.size()) ss << ", ";
         }
         ss << "], ";
+
+        if (!node.partition.empty()) {
+            ss << "\"partition\": [";
+            for (size_t i = 0; i < node.partition.size(); ++i) {
+                ss << node.partition[i];
+                if (i + 1 < node.partition.size()) ss << ", ";
+            }
+            ss << "], ";
+        }
+
+        if (!node.group_witnesses.empty()) {
+            ss << "\"group_witnesses\": [";
+            for (size_t i = 0; i < node.group_witnesses.size(); ++i) {
+                const auto& gw = node.group_witnesses[i];
+                ss << "{\"rule\": \"" << gw.rule << "\"";
+                ss << ", \"basic_reduce\": " << gw.basic_reduce_val;
+                if (gw.rule == "cross_reduce") {
+                    ss << ", \"cross_row\": " << gw.cross_row_idx;
+                    ss << ", \"cross_size\": " << gw.cross_size;
+                }
+                if (gw.rule == "lemma2" || gw.rule == "lemma3" || gw.rule == "double_lemma3") {
+                    ss << ", \"lemma_var_id\": " << gw.lemma_var_id;
+                    ss << ", \"lemma_D\": " << gw.lemma_local_D;
+                    ss << ", \"pos_count\": " << gw.lemma_pos_count;
+                    ss << ", \"neg_count\": " << gw.lemma_neg_count;
+                }
+                ss << "}";
+                if (i + 1 < node.group_witnesses.size()) ss << ", ";
+            }
+            ss << "], ";
+        }
     } 
-    else if (node.type == "divide_clause") {
+    else if (logged_type == "divide_clause") {
         ss << "\"target_clause_idx\": " << node.target_clause_idx << ", ";
     } 
-    else if (node.type == "branch") {
+    else if (logged_type == "branch") {
         ss << "\"branching_variable\": " << node.pivot_id << ", ";
+        ss << "\"reduced_cnt_true\": " << node.reduced_cnt_true << ", ";
+        ss << "\"reduced_cnt_false\": " << node.reduced_cnt_false << ", ";
     } 
-    else if (node.type == "reduction") {
+    else if (logged_type == "reduction") {
         ss << "\"rule\": \"" << node.rule << "\", ";
         ss << "\"pivot_id\": " << node.pivot_id << ", ";
+        if (!node.rr_witness_clauses.empty()) {
+            ss << "\"witness_clauses\": [";
+            for (size_t i = 0; i < node.rr_witness_clauses.size(); ++i) {
+                ss << node.rr_witness_clauses[i];
+                if (i + 1 < node.rr_witness_clauses.size()) ss << ", ";
+            }
+            ss << "], ";
+        }
     } 
-    else if (node.type == "add_variable") {
+    else if (logged_type == "add_variable") {
         // Если вдруг add_variable окажется внутри микро-дерева
         ss << "\"added_variable_id\": " << node.pivot_id << ", ";
         ss << "\"pos_deg\": 0, "; // Дефолтные значения, если их нет в C++ ProofNode

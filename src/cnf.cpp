@@ -443,7 +443,15 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
 
         vector<GroupWitness> now_witnesses;
 
-        for (int c = 0; c < rcnt; ++c)
+        int max_class = -1;
+
+        for (int i = 0; i < rcnt; ++i)
+        {
+            if (cs[i] > max_class)
+                max_class = cs[i];
+        }
+
+        for (int c = 0; c <= max_class; ++c)
         {
             bool has_class = false;
 

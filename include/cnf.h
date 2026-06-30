@@ -55,6 +55,9 @@ struct ProofNode {
     std::vector<std::string> grouping_justifications; 
     std::vector<int> rr_witness_clauses;
 
+    int reduced_cnt_true = 0;
+    int reduced_cnt_false = 0;
+
     ProofNode() {}
     
     ProofNode(std::vector<int> v) : type("leaf"), vec(v), tau(branching_factor(v)) {}

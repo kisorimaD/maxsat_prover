@@ -212,6 +212,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     double granted = 100.0;
     ProofNode granted_node({0});
     granted_node.tau = 100.0;
+    granted_node.formula_snapshot = this->get_snapshot();
 
     map<int, VarStats> stats;
 
@@ -487,6 +488,8 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
                     best_node.vec = current_branching;
                     best_node.tau = current_tau;
                     best_node.children = {f_nodes[i], s_nodes[j]};
+                    best_node.reduced_cnt_true = reduced_cnt1;
+                    best_node.reduced_cnt_false = reduced_cnt0;
                 }
             }
         }
