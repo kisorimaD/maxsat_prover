@@ -58,6 +58,7 @@ int main(int argc, const char *argv[])
     if (test_names.count(test_name) == 0)
     {
         print_help();
+        return 0;
     }
 
     test_names[test_name]();

@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <iostream>
 #include <sstream>
+#include <iomanip>
 #include <functional>
 
 using namespace std;
@@ -936,7 +937,7 @@ void test_universal()
             }
             cout << endl;
 
-            cout << branching_factor(C_branch) << endl;
+            cout << setprecision(10) << branching_factor(C_branch) << endl;
 
             continue;
         }

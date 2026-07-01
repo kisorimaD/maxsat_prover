@@ -565,9 +565,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
             }
 
             bool cross_reduce = false;
-            int cross_size =
-                -1; // Количество невыполненных клоз в остальных кроме cross
-                    // подстановках (не считая клоз, которые полностью не выполнены)
+            int cross_size = -1; // Количество невыполненных клоз в остальных кроме cross подстановках (не считая клоз, которые полностью не выполнены)
 
             int cross_row = -1;
 
@@ -649,10 +647,10 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                                 continue;
                             }
 
-                            if (((rclauses[cross_row] >> cl) & 1) !=
-                                ((rclauses[i] >> cl) & 1))
+                            if(((no_clauses[i] >> cl) & 1) == 1 && !clause_only_no[cl]) // Клоза с NO в cross reduce должна быть NO во всех подстановках
                             {
-                                cross_size++;
+                                cross_reduce = false;
+                                break;
                             }
 
                             char now_result = (((rclauses[i] >> cl) & 1) == 0 ? 'N' : 'Y');
@@ -672,7 +670,50 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
 
                         if (!cross_reduce)
                             break;
+
+
+                        // Считаем cross_size
+                        cross_size = 0;
+                        for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
+                        {
+                            if(!clause_only_no[cl])
+                            {
+                                bool cross_undefined_clause = true;
+
+                                if(((rclauses[cross_row] >> cl) & 1) == 0)
+                                {
+                                    continue;
+                                }
+                                // Проверяем, правда ли эта клоза нам подходит: в cross тут стоит YES, а в остальных - ?
+                                for(int sub = 0; sub < rcnt; ++sub){
+
+                                    if(cs[sub] != c || sub == cross_row)
+                                    {
+                                        continue;
+                                    }
+                                    
+                                    if(((rclauses[sub] >> cl) & 1) == 1 || ((no_clauses[sub] >> cl) & 1) == 1)
+                                    {
+                                        cross_undefined_clause = false;
+                                        break;
+                                    }
+                                }
+
+                                if(cross_undefined_clause)
+                                    cross_size++;
+                            }
+                        }
                     }
+                }
+
+                if(partition_size > 2 && cross_reduce)
+                {
+                    for(int i = 0; i < rcnt; ++i)
+                        cout << cs[i] << " ";
+                    cout << endl;
+                    cout << "C: " << c << endl;
+                    print_cnf(*this);
+                    assert(0);
                 }
             }
 
@@ -888,9 +929,12 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                 GroupWitness gw;
                 gw.basic_reduce_val = basic_reduce;
 
-                if (cross_reduce && cross_size <= 2)
+                if (cross_reduce)
                 {
-                    if (cross_size == 1)
+                    if(cross_size == 0)
+                        assert(0);
+
+                    if (cross_size != 2)
                         now_branch.push_back(basic_reduce + 1);
                     else
                     {
