@@ -137,9 +137,28 @@ std::string CertLogger::proof_node_to_json(const ProofNode& node) {
                 }
                 if (gw.rule == "lemma2" || gw.rule == "lemma3" || gw.rule == "double_lemma3") {
                     ss << ", \"lemma_var_id\": " << gw.lemma_var_id;
+                    if (gw.rule == "double_lemma3") {
+                        ss << ", \"second_lemma_var_id\": " << gw.second_lemma_var_id;
+                    }
                     ss << ", \"lemma_D\": " << gw.lemma_local_D;
                     ss << ", \"pos_count\": " << gw.lemma_pos_count;
                     ss << ", \"neg_count\": " << gw.lemma_neg_count;
+                }
+                if (gw.rule == "residual_rr" || gw.rule == "residual_xiao") {
+                    ss << ", \"residual_decrease\": " << gw.residual_decrease;
+                    ss << ", \"residual_vector\": [";
+                    for (size_t j = 0; j < gw.residual_vector.size(); ++j) {
+                        ss << gw.residual_vector[j];
+                        if (j + 1 < gw.residual_vector.size()) ss << ", ";
+                    }
+                    ss << "]";
+                    ss << ", \"residual_reduction_rules\": [";
+                    for (size_t j = 0; j < gw.residual_reduction_rules.size(); ++j) {
+                        ss << "\"" << gw.residual_reduction_rules[j] << "\"";
+                        if (j + 1 < gw.residual_reduction_rules.size()) ss << ", ";
+                    }
+                    ss << "]";
+                    ss << ", \"residual_formula\": " << formula_to_json(gw.residual_formula);
                 }
                 ss << "}";
                 if (i + 1 < node.group_witnesses.size()) ss << ", ";

@@ -12,8 +12,6 @@ extern map<int, string> ID2VAR;
 extern map<string, int> VAR2ID;
 extern int ID_COUNTER;
 
-extern double C; // Временная константа, решения ниже которой мы отбрасываем
-
 double branching_factor(const vector<int> &a, double tol = 1e-12);
 
 struct
@@ -22,7 +20,7 @@ struct
 } MaxSATSettings;
 
 struct GroupWitness {
-    std::string rule;            // "basic", "cross_reduce", "lemma2", "lemma3", "double_lemma3"
+    std::string rule;            // "basic", "cross_reduce", "lemma2", "lemma3", "double_lemma3", "lemma4"
     int basic_reduce_val = 0;    
     
     // Специфичные аргументы для cross_reduce
@@ -30,10 +28,18 @@ struct GroupWitness {
     int cross_size = -1;         
 
     // Специфичные аргументы для лемм
+    // Для lemma4: lemma_local_D хранит j (= min(pos,neg))
     int lemma_var_id = -1;
+    int second_lemma_var_id = -1; // второй (2,1)-singleton для double_lemma3
     int lemma_local_D = -1;
     int lemma_pos_count = -1;
     int lemma_neg_count = -1;
+
+    // Constructive processing of the materialized residual formula.
+    int residual_decrease = 0;
+    vector<int> residual_vector;
+    vector<string> residual_reduction_rules;
+    vector<vector<int>> residual_formula;
 };
 
 struct ProofNode {
@@ -121,6 +127,18 @@ struct LiteralDegType
 
 extern vector<LiteralDegType> POSSIBLE_LITERALS;
 
+struct FormulaVarStats
+{
+    int pos_count = 0;
+    int neg_count = 0;
+    int pos_unit_count = 0;
+    int neg_unit_count = 0;
+    int pos_min_D = 999999;
+    int neg_min_D = 999999;
+    vector<int> pos_indices;
+    vector<int> neg_indices;
+};
+
 class CNF
 {
 
@@ -151,6 +169,60 @@ public:
 
 };
 
+struct GroupResidual
+{
+    CNF *cnf = nullptr;
+    int base_decrease = 0;
+    int common_satisfied_mask = 0;
+    int common_empty_mask = 0;
+    map<int, pair<int, bool>> representative_map;
+    bool valid = false;
+    string error;
+};
+
+struct ReductionStep
+{
+    bool applied = false;
+    string rule;
+    int pivot_id = -1;
+    int decrease = 0;
+    vector<int> witness_clauses;
+    CNF *cnf = nullptr;
+};
+
+struct ReductionFixpoint
+{
+    CNF *cnf = nullptr;
+    int total_decrease = 0;
+    vector<ReductionStep> steps;
+};
+
+struct DirectLemmaResult
+{
+    bool applied = false;
+    string rule;
+    int pivot_id = -1;
+    int second_pivot_id = -1;
+    int local_D = -1;
+    int pos_count = -1;
+    int neg_count = -1;
+    vector<int> vec;
+    double tau = 100.0;
+};
+
+bool is_any_unknown_literal(const Literal *l);
+map<int, FormulaVarStats> analyze_formula(const CNF &cnf);
+GroupResidual materialize_group_residual(const CNF &cnf,
+                                         const vector<int> &ids,
+                                         const vector<int> &group_masks);
+void destroy_cnf(CNF *cnf);
+Literal *intern_literal(int id, bool inv);
+ReductionStep apply_first_reduction(const CNF &cnf);
+ReductionStep apply_named_reduction(const CNF &cnf, const string &rule);
+ReductionFixpoint reduce_to_fixpoint(const CNF &cnf);
+DirectLemmaResult find_best_direct_lemma23(const CNF &cnf);
+vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf);
+
 struct DivideResult {
     int clause_idx = -1;
     CNF* cnf_empty = nullptr;
@@ -167,6 +239,10 @@ vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<
 DivideResult empty_divide(CNF* cnf);
 
 bool is_A_subset_of_B(int A, int B);
+bool check_group_validity(const vector<int>& group_masks, int k, string& diag);
+
+extern vector<string> valid_3_partitions;
+
 
 void print_clause(Clause &c);
 void print_cnf(CNF &cnf);

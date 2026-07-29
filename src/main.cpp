@@ -35,9 +35,12 @@ void fill_test_names()
     test_names["addvar"] = test_add_new_var;
     test_names["nounknown"] = test_no_unknown_literal;
     test_names["test"] = test_universal;
+    test_names["groups3"] = test_groups3_validity;
+    test_names["reductions"] = test_constructive_reductions;
 
     test_names["help"] = print_help;
     test_names["--help"] = print_help;
+
 }
 
 int main(int argc, const char *argv[])

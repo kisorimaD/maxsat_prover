@@ -2,6 +2,7 @@
 #include "test.h"
 #include "cert_logger.h"
 
+#include <algorithm>
 #include <assert.h>
 #include <iostream>
 #include <sstream>
@@ -61,6 +62,137 @@ void test_basics()
 
 void test_simple_branch()
 {}
+
+static vector<vector<int>> sorted_snapshot(CNF *cnf)
+{
+    vector<vector<int>> snapshot = cnf->get_snapshot();
+    for (auto &clause : snapshot)
+        sort(clause.begin(), clause.end());
+    sort(snapshot.begin(), snapshot.end());
+    return snapshot;
+}
+
+static void check_constructive_reduction(const vector<vector<int>> &input,
+                                         const string &expected_rule,
+                                         int expected_decrease,
+                                         vector<vector<int>> expected_formula,
+                                         bool isolate_rule = false)
+{
+    CNF *cnf = create_dummy_cnf(input);
+    ReductionStep step = isolate_rule
+                             ? apply_named_reduction(*cnf, expected_rule)
+                             : apply_first_reduction(*cnf);
+    assert(step.applied);
+    assert(step.rule == expected_rule);
+    assert(step.decrease == expected_decrease);
+    for (auto &clause : expected_formula)
+        sort(clause.begin(), clause.end());
+    sort(expected_formula.begin(), expected_formula.end());
+    assert(sorted_snapshot(step.cnf) == expected_formula);
+    destroy_cnf(step.cnf);
+    delete_dummy_cnf(cnf);
+}
+
+void test_constructive_reductions()
+{
+    check_constructive_reduction({{2, -2, 3}, {4, 0}},
+                                 "RR1", 1, {{4, 0}}, true);
+    check_constructive_reduction({{2, 0}, {-2, 1}},
+                                 "RR2", 1, {{0, 1}});
+    check_constructive_reduction({{2}, {2, 0}, {-2, 1}},
+                                 "RR3", 2, {{1}});
+    check_constructive_reduction({{2, 3}, {-2, 3}, {2, 0}, {-2, 1},
+                                  {-3, 0}, {-3, 1}},
+                                 "RR4", 1,
+                                 {{3}, {2, 0}, {-2, 1}, {-3, 0}, {-3, 1}});
+    check_constructive_reduction({{2, 3}, {2, 4}, {-2, 5}},
+                                 "RR5", 1,
+                                 {{3, 5}, {-3, 4, 5}}, true);
+    check_constructive_reduction({{2, 0}, {2, 1}, {-2, 3, 0},
+                                  {3, 1}, {-3, 0}},
+                                 "RR6", 1,
+                                 {{3, 0}, {3, 0, 1}, {3, 1}, {-3, 0}});
+    check_constructive_reduction({{2, 3}, {2, 3, 4},
+                                  {-2, -3, 5}, {-3, 6}},
+                                 "RR7", 0,
+                                 {{2, -2}, {2, -2, 4},
+                                  {-2, 2, 5}, {2, 6}}, true);
+    check_constructive_reduction({{2, 3, 4}, {-2, -3, 5}, {-2, 6}},
+                                 "RR8", 1,
+                                 {{-2, -3, 5}, {-2, 6}}, true);
+    check_constructive_reduction({{2, 4}, {2, 5},
+                                  {-2, 3, 6}, {-2, 3, 7}, {-3}},
+                                 "RR9", 0,
+                                 {{3, 4, 6}, {3, 4, 7},
+                                  {3, 5, 6}, {3, 5, 7}, {-3}}, true);
+
+    CNF *cascade_input = create_dummy_cnf({{2, 3}, {-2, 3}, {-3, 0}});
+    ReductionFixpoint cascade = reduce_to_fixpoint(*cascade_input);
+    assert(cascade.total_decrease == 2);
+    assert(cascade.steps.size() == 2);
+    assert(cascade.steps[0].rule == "RR2");
+    assert(cascade.steps[1].rule == "RR2");
+    vector<vector<int>> cascade_expected = {{0}};
+    assert(sorted_snapshot(cascade.cnf) == cascade_expected);
+    destroy_cnf(cascade.cnf);
+    delete_dummy_cnf(cascade_input);
+
+    CNF *lemma3_input = create_dummy_cnf({{0, 4}, {0, -4}, {0, -4}});
+    DirectLemmaResult lemma3 = find_best_direct_lemma23(*lemma3_input);
+    assert(lemma3.applied);
+    assert(lemma3.rule == "lemma3");
+    assert(lemma3.vec == vector<int>({1, 8}));
+    delete_dummy_cnf(lemma3_input);
+
+    // Regression from the remaining (3,2)-case: after either assignment of
+    // x, z becomes a 3-variable and Lemma 3 must be composed in the child.
+    CNF *child_pipeline = create_dummy_cnf({
+        {0, 2, 3}, {0, 2, 4}, {0, 2}, {0, -2, 3}, {0, -2, 4},
+        {0, 3}, {0, 3}, {-3}, {0, -4}, {0, -4}});
+    ProofNode child_result = child_pipeline->xiao_branch(1);
+    vector<int> expected_child_vec = {11, 10, 4, 3};
+    sort(expected_child_vec.begin(), expected_child_vec.end(), greater<int>());
+    assert(child_result.vec == expected_child_vec);
+    assert(child_result.tau < 1.28855);
+    ProofNode grouped_child = child_pipeline->branch_group({2, 3, 4});
+    assert(grouped_child.vec == expected_child_vec);
+    assert(grouped_child.tau < 1.28855);
+    delete_dummy_cnf(child_pipeline);
+
+    // Step 5.3: z is a (4,1)-singleton.  Continue with RR6 in z=1,
+    // but leave z=0 as a recursive stop instead of forcing Lemma 2 there.
+    CNF *step53_input = create_dummy_cnf({
+        {0, 2, 3}, {0, 2}, {0, 2}, {1, -2, 3}, {0, -2, 4},
+        {0, 3, 4}, {0, 3, 4}, {-3}, {0, 4}, {-4}});
+    vector<int> expected_step53 = {6, 1};
+    ProofNode step53_xiao = step53_input->xiao_branch(1);
+    assert(step53_xiao.vec == expected_step53);
+    assert(step53_xiao.tau < 1.28855);
+    ProofNode step53_group = step53_input->branch_group({2, 3, 4});
+    assert(step53_group.tau <= step53_xiao.tau + 1e-12);
+    delete_dummy_cnf(step53_input);
+
+    auto check_step55 = [&](const vector<vector<int>> &formula)
+    {
+        CNF *input = create_dummy_cnf(formula);
+        vector<int> expected = {11, 10, 4, 3};
+        ProofNode xiao = input->xiao_branch(1);
+        assert(xiao.vec == expected);
+        assert(xiao.tau < 1.28855);
+        ProofNode grouped = input->branch_group({2, 3, 4});
+        assert(grouped.tau <= xiao.tau + 1e-12);
+        delete_dummy_cnf(input);
+    };
+
+    check_step55({
+        {1, 2}, {0, 2}, {0, 2}, {0, -2, 3}, {0, -2, 4},
+        {0, 3, 4}, {0, 3}, {-3}, {0, 4}, {-4}});
+    check_step55({
+        {1, 2}, {0, 2}, {0, 2}, {0, -2, 3}, {0, -2, 4},
+        {0, 3}, {0, 3}, {-3}, {0, 4}, {0, 4}, {-4}});
+
+    cout << "RR1--RR9 constructive tests passed\n";
+}
 
 void test_branching_factor()
 {
@@ -446,8 +578,8 @@ void test_universal()
 
     print_help_universal();
 
-    // double C = 1.28855;
-    C = 1.2873;
+    double C = 1.28855;
+    // C = 1.2873;
 
     while (command != "exit")
     {
@@ -735,6 +867,14 @@ void test_universal()
             int i;
             cin >> i;
 
+            if (i < 0 || i >= (int)cur.size())
+            {
+                cout << "Формулы с индексом " << i
+                     << " сейчас нет; осталось [" << cur.size()
+                     << "] вариантов.\n\n";
+                continue;
+            }
+
             pretty_branch_print(vars, cur.at(i));
             cout << endl;
 
@@ -976,4 +1116,95 @@ void test_universal()
 
         cout << "Команда [" << command << "] не распознана\n";
     }
+}
+
+// -----------------------------------------------------------------------
+// Тест: проверяет корректность всех разбиений из groups3.txt
+//
+// Каждое разбиение — строка из 8 символов (цифр), где s[i] — номер
+// группы (класс) для i-й подстановки {x=бит0, y=бит1, z=бит2}.
+// Для каждой группы вызываем check_group_validity с k=3.
+// -----------------------------------------------------------------------
+void test_groups3_validity()
+{
+    const int k = 3;  // Три переменных ветвления
+    const int total_masks = 1 << k; // 8 подстановок
+
+    if (valid_3_partitions.empty())
+    {
+        cout << "[SKIP] valid_3_partitions не загружены (запустите preprocess())\n";
+        return;
+    }
+
+    int total   = (int)valid_3_partitions.size();
+    int ok_cnt  = 0;
+    int bad_cnt = 0;
+
+    cout << "Проверяем " << total << " разбиений из groups3.txt...\n";
+
+    for (int pi = 0; pi < total; ++pi)
+    {
+        const string& part = valid_3_partitions[pi];
+
+        if ((int)part.size() != total_masks)
+        {
+            cout << "[BAD #" << pi << "] Строка \"" << part
+                 << "\" имеет неверную длину " << part.size()
+                 << " (ожидается " << total_masks << ")\n";
+            bad_cnt++;
+            continue;
+        }
+
+        // Определяем, сколько классов и какие маски в каждом
+        int max_class = 0;
+        for (char ch : part)
+            max_class = max(max_class, (int)(ch - '0'));
+
+        bool partition_ok = true;
+
+        for (int cls = 0; cls <= max_class; ++cls)
+        {
+            // Собираем маски этого класса
+            vector<int> group_masks;
+            for (int mask = 0; mask < total_masks; ++mask)
+                if ((int)(part[mask] - '0') == cls)
+                    group_masks.push_back(mask);
+
+            if (group_masks.empty())
+                continue; // пропуск несуществующего класса
+
+            string diag;
+            bool group_ok = check_group_validity(group_masks, k, diag);
+
+            if (!group_ok)
+            {
+                if (partition_ok)
+                {
+                    // Первая ошибка в этом разбиении — выводим заголовок
+                    cout << "\n[BAD #" << pi << "] Разбиение: \"" << part << "\"\n";
+                }
+                partition_ok = false;
+
+                // Маски в группе с расшифровкой (xyz — бит0=x, бит1=y, бит2=z)
+                cout << "  Класс " << cls << " (маски:";
+                for (int m : group_masks)
+                {
+                    cout << " " << ((m >> 2) & 1) << ((m >> 1) & 1) << (m & 1);
+                }
+                cout << ")\n";
+                cout << "  Причина: " << diag << "\n";
+            }
+        }
+
+        if (partition_ok)
+            ok_cnt++;
+        else
+            bad_cnt++;
+    }
+
+    cout << "\n=== Итог: " << ok_cnt << "/" << total << " разбиений корректны";
+    if (bad_cnt == 0)
+        cout << " — всё OK ✓\n";
+    else
+        cout << ", " << bad_cnt << " НЕКОРРЕКТНЫХ ✗\n";
 }

@@ -14,3 +14,5 @@ void test_no_unknown_literal();
 void printProgress_test(double percentage);
 
 void test_universal();
+void test_groups3_validity();
+void test_constructive_reductions();
