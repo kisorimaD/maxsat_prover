@@ -34,12 +34,17 @@ vector<Literal *> clause_tail(Clause *clause, int excluded_var,
 }
 
 void append_merged_clause(CNF *target,
-                          const vector<vector<Literal *>> &parts)
+                          const vector<vector<Literal *>> &parts,
+                          const vector<Clause *> &sources = {})
 {
     vector<Literal *> merged;
     for (const auto &part : parts)
         merged.insert(merged.end(), part.begin(), part.end());
-    target->clauses.push_back(new Clause(merged));
+    map<int, bool> tails;
+    for (Clause *source : sources)
+        for (auto const &[id, nonempty] : source->tail_atoms)
+            tails[id] = tails[id] || nonempty;
+    target->clauses.push_back(new Clause(merged, tails));
 }
 
 CNF *copy_without(const CNF &source, const set<int> &removed)
@@ -164,7 +169,8 @@ ReductionStep apply_rr3(const CNF &cnf,
                 // The literal is false and is removed from the clause.
             }
             if (!satisfied)
-                reduced->clauses.push_back(new Clause(remaining));
+                reduced->clauses.push_back(new Clause(remaining,
+                                                       clause->tail_atoms));
         }
 
         int decrease = (int)cnf.clauses.size() - (int)reduced->clauses.size();
@@ -194,7 +200,8 @@ ReductionStep apply_rr2(const CNF &cnf,
         CNF *reduced = copy_without(cnf, {pos_idx, neg_idx});
         append_merged_clause(reduced,
                              {clause_tail(cnf.clauses[pos_idx], id),
-                              clause_tail(cnf.clauses[neg_idx], id)});
+                              clause_tail(cnf.clauses[neg_idx], id)},
+                             {cnf.clauses[pos_idx], cnf.clauses[neg_idx]});
         int decrease = (int)cnf.clauses.size() - (int)reduced->clauses.size();
         if (decrease < 1)
         {
@@ -223,7 +230,8 @@ ReductionStep apply_rr4(const CNF &cnf,
 
                 CNF *reduced = copy_without(cnf, {pos_idx, neg_idx});
                 append_merged_clause(reduced,
-                                     {clause_tail(cnf.clauses[pos_idx], id)});
+                                     {clause_tail(cnf.clauses[pos_idx], id)},
+                                     {cnf.clauses[pos_idx]});
                 int decrease = (int)cnf.clauses.size() -
                                (int)reduced->clauses.size();
                 if (decrease < 1)
@@ -285,8 +293,10 @@ ReductionStep apply_rr5(const CNF &cnf,
                 vector<Literal *> not_y = {intern_literal(y->id, !y->inv)};
 
                 CNF *reduced = copy_without(cnf, {xy_idx, xC_idx, nxD_idx});
-                append_merged_clause(reduced, {y_part, D});
-                append_merged_clause(reduced, {not_y, C, D});
+                append_merged_clause(reduced, {y_part, D},
+                                     {cnf.clauses[nxD_idx]});
+                append_merged_clause(reduced, {not_y, C, D},
+                                     {cnf.clauses[xC_idx], cnf.clauses[nxD_idx]});
                 int decrease = (int)cnf.clauses.size() -
                                (int)reduced->clauses.size();
                 if (decrease != 1)
@@ -347,7 +357,8 @@ ReductionStep apply_rr6(const CNF &cnf,
                 for (int dominant_idx : dominant_indices)
                 {
                     vector<Literal *> Ci = clause_tail(cnf.clauses[dominant_idx], id);
-                    append_merged_clause(reduced, {y, Ci, D});
+                    append_merged_clause(reduced, {y, Ci, D},
+                                         {cnf.clauses[dominant_idx], unique_clause});
                 }
 
                 int decrease = (int)cnf.clauses.size() -
@@ -408,7 +419,8 @@ ReductionStep apply_rr7(const CNF &cnf,
                                 transformed.push_back(
                                     intern_literal(x.id, x.inv));
                         }
-                        reduced->clauses.push_back(new Clause(transformed));
+                        reduced->clauses.push_back(new Clause(transformed,
+                                                               clause->tail_atoms));
                     }
                     return {true, "RR7", y_id, 0, witnesses, reduced};
                 }
@@ -493,7 +505,8 @@ ReductionStep apply_rr9(const CNF &cnf,
                         append_merged_clause(
                             reduced,
                             {clause_tail(cnf.clauses[left_idx], x_id),
-                             clause_tail(cnf.clauses[right_idx], x_id)});
+                             clause_tail(cnf.clauses[right_idx], x_id)},
+                            {cnf.clauses[left_idx], cnf.clauses[right_idx]});
                 return {true, "RR9", x_id, 0,
                         {left[0], left[1], right[0], right[1]}, reduced};
             }

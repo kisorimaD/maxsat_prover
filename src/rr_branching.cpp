@@ -48,7 +48,7 @@ pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool val_to_se
             if (new_lits_vec.size() == 1 && is_any_unknown_literal(new_lits_vec[0]))
                 continue;
 
-            Clause *new_c = new Clause(new_lits_vec);
+            Clause *new_c = new Clause(new_lits_vec, c->tail_atoms);
             new_cnf->clauses.push_back(new_c);
         }
     }
@@ -78,7 +78,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     double granted = 100.0;
     ProofNode granted_node({0});
     granted_node.tau = 100.0;
-    granted_node.formula_snapshot = this->get_snapshot();
+    granted_node.formula_snapshot = this->get_cert_snapshot();
 
     map<int, FormulaVarStats> stats = analyze_formula(*this);
 
@@ -95,17 +95,24 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
         }
         else
         {
-            child_node = ProofNode({reduction.decrease});
-            child_node.formula_snapshot = reduction.cnf->get_snapshot();
+            // The reduction edge itself accounts for the decrease.  Its
+            // child is a recursive call, not another copy of that decrease.
+            child_node = ProofNode({0});
+            child_node.tau = 100.0;
+            child_node.formula_snapshot = reduction.cnf->get_cert_snapshot();
         }
 
         ProofNode parent;
         parent.type = "reduction";
         parent.rule = reduction.rule;
         parent.pivot_id = reduction.pivot_id;
-        parent.vec = child_node.vec;
-        parent.tau = child_node.tau;
-        parent.formula_snapshot = this->get_snapshot();
+        parent.vec = reduction.decrease == 0
+                         ? child_node.vec
+                         : vector<int>{reduction.decrease};
+        parent.tau = reduction.decrease == 0
+                         ? child_node.tau
+                         : branching_factor(parent.vec);
+        parent.formula_snapshot = this->get_cert_snapshot();
         parent.rr_witness_clauses = reduction.witness_clauses;
         parent.children.push_back(child_node);
         destroy_cnf(reduction.cnf);
@@ -123,7 +130,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
         granted_node.tau = direct_lemma.tau;
         granted_node.rule = direct_lemma.rule;
         granted_node.pivot_id = direct_lemma.pivot_id;
-        granted_node.formula_snapshot = this->get_snapshot();
+        granted_node.formula_snapshot = this->get_cert_snapshot();
     }
 
     // Step 4 / Lemma 4.
@@ -143,7 +150,9 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
                     granted = f;
                     granted_node.vec = step4_branch;
                     granted_node.tau = f;
-                    granted_node.formula_snapshot = this->get_snapshot();
+                    granted_node.rule = "lemma4";
+                    granted_node.pivot_id = id;
+                    granted_node.formula_snapshot = this->get_cert_snapshot();
                 }
             }
         };
@@ -174,7 +183,9 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
                 granted = f;
                 granted_node.vec = step51_branch;
                 granted_node.tau = f;
-                granted_node.formula_snapshot = this->get_snapshot();
+                granted_node.rule = "step5.1";
+                granted_node.pivot_id = id;
+                granted_node.formula_snapshot = this->get_cert_snapshot();
             }
         }
     }
@@ -188,17 +199,30 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
 
     for (auto const &[var_id, s] : stats)
     {
+        auto assignment_offset = [&](bool value)
+        {
+            int result = 0;
+            for (Clause *clause : clauses)
+                for (Literal *lit : clause->lits)
+                    if (!is_any_unknown_literal(lit) && lit->id == var_id &&
+                        value != lit->inv)
+                    {
+                        ++result;
+                        break;
+                    }
+            return result;
+        };
         // Ветвь 1: x = 1
         auto [reduced_cnt1, new_cnf1] = apply_xiao_assignment(this, var_id, true);
         ProofNode child1_res = new_cnf1->xiao_branch(depth - 1, "");
         ProofNode stop1_res({0});
-        stop1_res.formula_snapshot = new_cnf1->get_snapshot();
+        stop1_res.formula_snapshot = new_cnf1->get_cert_snapshot();
 
         // Ветвь 2: x = 0
         auto [reduced_cnt0, new_cnf0] = apply_xiao_assignment(this, var_id, false);
         ProofNode child0_res = new_cnf0->xiao_branch(depth - 1, "");
         ProofNode stop0_res({0});
-        stop0_res.formula_snapshot = new_cnf0->get_snapshot();
+        stop0_res.formula_snapshot = new_cnf0->get_cert_snapshot();
 
         ProofNode f_nodes[2] = {child1_res, stop1_res};
         ProofNode s_nodes[2] = {child0_res, stop0_res};
@@ -225,6 +249,8 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
                     best_node.children = {f_nodes[i], s_nodes[j]};
                     best_node.reduced_cnt_true = reduced_cnt1;
                     best_node.reduced_cnt_false = reduced_cnt0;
+                    best_node.offset_true = assignment_offset(true);
+                    best_node.offset_false = assignment_offset(false);
                 }
             }
         }
@@ -241,7 +267,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
         return granted_node;
     }
 
-    best_node.formula_snapshot = this->get_snapshot();
+    best_node.formula_snapshot = this->get_cert_snapshot();
 
     return best_node;
 }

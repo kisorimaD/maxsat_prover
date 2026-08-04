@@ -68,6 +68,9 @@ Literal *intern_literal(int id, bool inv)
 }
 
 long long GLOBAL_NODE_ID_COUNTER = 0;
+int GLOBAL_TAIL_ATOM_COUNTER = 0;
+
+int fresh_tail_atom() { return ++GLOBAL_TAIL_ATOM_COUNTER; }
 
 CNF::CNF()
 {
@@ -97,6 +100,23 @@ std::vector<std::vector<int>> CNF::get_snapshot()
             else
                 cl_snap.push_back((l->inv ? -1 : 1) * l->id);
         }
+        snap.push_back(cl_snap);
+    }
+    return snap;
+}
+
+std::vector<std::vector<int>> CNF::get_cert_snapshot()
+{
+    std::vector<std::vector<int>> snap;
+    for (Clause *c : clauses)
+    {
+        std::vector<int> cl_snap;
+        for (Literal *l : c->lits)
+            if (!is_any_unknown_literal(l))
+                cl_snap.push_back((l->inv ? -1 : 1) * l->id);
+        for (auto const &[tail_id, nonempty] : c->tail_atoms)
+            cl_snap.push_back((nonempty ? SNAP_TAIL_NONEMPTY_BASE
+                                        : SNAP_TAIL_ANY_BASE) + tail_id);
         snap.push_back(cl_snap);
     }
     return snap;
@@ -252,7 +272,7 @@ ProofNode CNF::branch(vector<int> ids)
     }
 
     ProofNode node(branch);
-    node.formula_snapshot = this->get_snapshot();
+    node.formula_snapshot = this->get_cert_snapshot();
     node.subsumptions = current_subsumptions;
 
     vector<int> full_partition(1 << k, -1);
@@ -261,6 +281,60 @@ ProofNode CNF::branch(vector<int> ids)
         full_partition[valid_masks[i]] = i;
     }
     node.partition = full_partition;
+    node.type = "enumeration";
+    node.branch_ids = ids;
+
+    map<int, int> id_to_index;
+    for (int i = 0; i < k; ++i) id_to_index[ids[i]] = i;
+    for (int mask : valid_masks)
+    {
+        vector<vector<int>> residual;
+        int offset = 0;
+        int decrease = 0;
+        for (Clause *clause : clauses)
+        {
+            bool satisfied = false;
+            vector<int> child_clause;
+            for (Literal *lit : clause->lits)
+            {
+                if (is_any_unknown_literal(lit)) continue;
+                auto it = id_to_index.find(lit->id);
+                if (it == id_to_index.end())
+                    child_clause.push_back((lit->inv ? -1 : 1) * lit->id);
+                else
+                {
+                    bool value = ((mask >> it->second) & 1) != 0;
+                    if (value != lit->inv) satisfied = true;
+                }
+            }
+            if (satisfied)
+            {
+                ++offset;
+                ++decrease;
+                continue;
+            }
+            for (auto const &[tail_id, nonempty] : clause->tail_atoms)
+                child_clause.push_back((nonempty ? SNAP_TAIL_NONEMPTY_BASE
+                                                 : SNAP_TAIL_ANY_BASE) + tail_id);
+            if (child_clause.empty())
+            {
+                ++decrease;
+                continue;
+            }
+            residual.push_back(move(child_clause));
+        }
+
+        ProofNode call({0});
+        call.tau = 100.0;
+        call.formula_snapshot = residual;
+        ProofAlternative alternative;
+        alternative.offset = offset;
+        alternative.decrease = decrease;
+        alternative.assignments = {mask};
+        alternative.represented_masks = {mask};
+        alternative.proof = make_shared<ProofNode>(move(call));
+        node.alternatives.push_back(move(alternative));
+    }
 
     return node;
 }
@@ -601,7 +675,8 @@ GroupResidual materialize_group_residual(const CNF &cnf,
             return result;
         }
 
-        result.cnf->clauses.push_back(new Clause(transformed));
+        result.cnf->clauses.push_back(
+            new Clause(transformed, cnf.clauses[clause_idx]->tail_atoms));
     }
 
     result.valid = true;
@@ -719,7 +794,8 @@ bool check_group_validity(const vector<int>& group_masks, int k, string& diag)
     return true;
 }
 
-ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
+ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
+                            bool construct_proof)
 {
     partition_ind = 0;
 
@@ -951,152 +1027,6 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
             unique_ptr<CNF, void (*)(CNF *)> residual_guard(group_residual.cnf,
                                                             destroy_cnf);
 
-            bool cross_reduce = false;
-            int cross_size = -1; // Количество невыполненных клоз в остальных кроме cross подстановках (не считая клоз, которые полностью не выполнены)
-
-            int cross_row = -1;
-
-            // cross_reduce is proved and implemented for a two-row class.
-            // Larger affine classes are handled by their residual CNF.
-            if (partition_size == 2)
-            {
-                bool found_cross = false;
-
-                for (int i = 0; i < rcnt; ++i)
-                {
-                    if (cs[i] != c)
-                        continue;
-
-                    bool valid_cross = true;
-
-                    int lastz = 0;
-                    int zcnt = 0; // количество невыполненных клоз
-                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
-                    {
-                        if (((rclauses[i] >> cl) & 1) == 0 && !clause_only_no[cl])
-                        {
-                            // valid_cross = false;
-                            zcnt++;
-                            lastz = cl;
-                            // break;
-                        }
-                    }
-
-                    if (zcnt == 1)
-                    {
-                        if (((no_clauses[i] >> lastz) & 1) == 1)
-                        {
-                            // На месте cross стоит не ?, а NO. В таком случае мы не можем
-                            // применить cross_reduce
-                            valid_cross = false;
-                            continue;
-                        }
-
-                        // Проверяем единицы на столбце с одним нулём
-                        for (int sub = 0; sub < rcnt; ++sub)
-                        {
-                            if (cs[sub] != c || sub == i)
-                                continue;
-
-                            if (((rclauses[sub] >> lastz) & 1) == 0)
-                            {
-                                valid_cross = false;
-                                break;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        valid_cross = false;
-                    }
-
-                    if (valid_cross)
-                    {
-                        found_cross = true;
-                        cross_row = i;
-                        break;
-                    }
-                }
-
-                if (found_cross)
-                {
-                    // Если можно выполнить cross_reduce, то все остальные подстановки -
-                    // одинаковые
-                    cross_reduce = true;
-
-                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl) // Перебираем все клозы
-                    {
-                        char clause_result = '#'; // не инициализированное значение клозы
-
-                        for (int i = 0; i < rcnt; ++i) // Пробегаем по всем подстановкам из
-                                                       // нашего разбиения без cross_row
-                        {
-                            if (cs[i] != c || i == cross_row)
-                            {
-                                continue;
-                            }
-
-                            if(((no_clauses[i] >> cl) & 1) == 1 && !clause_only_no[cl]) // Клоза с NO в cross reduce должна быть NO во всех подстановках
-                            {
-                                cross_reduce = false;
-                                break;
-                            }
-
-                            char now_result = (((rclauses[i] >> cl) & 1) == 0 ? 'N' : 'Y');
-                            if (clause_result == '#')
-                            {
-                                clause_result = now_result;
-                            }
-                            else
-                            {
-                                if (clause_result != now_result)
-                                {
-                                    cross_reduce = false;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (!cross_reduce)
-                            break;
-
-
-                        // Считаем cross_size
-                        cross_size = 0;
-                        for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
-                        {
-                            if(!clause_only_no[cl])
-                            {
-                                bool cross_undefined_clause = true;
-
-                                if(((rclauses[cross_row] >> cl) & 1) == 0)
-                                {
-                                    continue;
-                                }
-                                // Проверяем, правда ли эта клоза нам подходит: в cross тут стоит YES, а в остальных - ?
-                                for(int sub = 0; sub < rcnt; ++sub){
-
-                                    if(cs[sub] != c || sub == cross_row)
-                                    {
-                                        continue;
-                                    }
-                                    
-                                    if(((rclauses[sub] >> cl) & 1) == 1 || ((no_clauses[sub] >> cl) & 1) == 1)
-                                    {
-                                        cross_undefined_clause = false;
-                                        break;
-                                    }
-                                }
-
-                                if(cross_undefined_clause)
-                                    cross_size++;
-                            }
-                        }
-                    }
-                }
-
-            }
-
             vector<pair<vector<int>, GroupWitness>> extra_choices;
 
             if (partition_size >= 2)
@@ -1132,6 +1062,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                     witness.lemma_local_D = direct_lemma.local_D;
                     witness.lemma_pos_count = direct_lemma.pos_count;
                     witness.lemma_neg_count = direct_lemma.neg_count;
+                    witness.claimed_vector = direct_lemma.vec;
                     extra_choices.push_back({direct_lemma.vec, witness});
                 }
 
@@ -1163,6 +1094,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                                 witness.lemma_local_D = local_j;
                                 witness.lemma_pos_count = pos;
                                 witness.lemma_neg_count = neg;
+                                witness.claimed_vector = {local_i4, 2 * local_j + 1};
                                 extra_choices.push_back(
                                     {{local_i4, 2 * local_j + 1}, witness});
                             }
@@ -1201,7 +1133,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                 unique_ptr<CNF, void (*)(CNF *)> reduced_residual_guard(
                     reduced_residual.cnf, destroy_cnf);
 
-                residual_summary.formula = group_residual.cnf->get_snapshot();
+                residual_summary.formula = group_residual.cnf->get_cert_snapshot();
                 if (reduced_residual.total_decrease > 0)
                 {
                     residual_summary.decrease = reduced_residual.total_decrease;
@@ -1234,7 +1166,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                 witness.residual_decrease = residual_summary.decrease;
                 witness.residual_vector = residual_summary.vec;
                 witness.residual_formula = residual_summary.formula;
-                witness.residual_reduction_rules = residual_summary.rules;
+                    witness.residual_reduction_rules = residual_summary.rules;
+                witness.claimed_vector = residual_summary.vec;
                 extra_choices.push_back({residual_summary.vec, witness});
             }
 
@@ -1256,20 +1189,6 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
                     witness.rule = "basic";
                     witness.basic_reduce_val = basic_reduce;
                     class_choices.push_back({{basic_reduce}, witness});
-                }
-
-                if (cross_reduce && cross_size >= 1 && cross_size <= 2)
-                {
-                    GroupWitness witness;
-                    witness.rule = "cross_reduce";
-                    witness.basic_reduce_val = basic_reduce;
-                    witness.cross_row_idx = cross_row;
-                    witness.cross_size = cross_size;
-                    if (cross_size != 2)
-                        class_choices.push_back({{basic_reduce + 1}, witness});
-                    else
-                        class_choices.push_back(
-                            {{basic_reduce + 1, basic_reduce + 8}, witness});
                 }
 
                 for (auto choice : extra_choices)
@@ -1344,7 +1263,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
     }
     node.partition = full_partition;
 
-    node.formula_snapshot = this->get_snapshot();
+    node.formula_snapshot = this->get_cert_snapshot();
     node.subsumptions = current_subsumptions;
     node.group_witnesses = mn_witnesses;
 
@@ -1356,6 +1275,112 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions)
     // variable splits with the shared child lemmas.
     if (direct_child_search.tau < node.tau)
         return direct_child_search;
+
+    if (!construct_proof)
+        return node;
+
+    node.type = "enumeration";
+    node.branch_ids = ids;
+
+    // Re-materialize only the winning partition.  Candidate residuals above
+    // are intentionally short-lived; the certificate needs constructive
+    // children only for the selected proof.
+    int winning_max_class = -1;
+    for (int value : mn_partition) winning_max_class = max(winning_max_class, value);
+    size_t winning_witness_index = 0;
+    for (int c = 0; c <= winning_max_class; ++c)
+    {
+        vector<int> group_masks;
+        for (int i = 0; i < rcnt; ++i)
+            if (mn_partition[i] == c) group_masks.push_back(masks[i]);
+        if (group_masks.empty()) continue;
+
+        GroupResidual residual = materialize_group_residual(*this, ids, group_masks);
+        if (!residual.valid)
+        {
+            if (residual.cnf) destroy_cnf(residual.cnf);
+            node.alternatives.clear();
+            break;
+        }
+
+        if (winning_witness_index >= mn_witnesses.size())
+        {
+            destroy_cnf(residual.cnf);
+            node.alternatives.clear();
+            break;
+        }
+        const GroupWitness &witness = mn_witnesses[winning_witness_index++];
+        ProofNode child;
+        if (witness.rule == "basic")
+        {
+            child = ProofNode({0});
+            child.tau = 100.0;
+            child.formula_snapshot = residual.cnf->get_cert_snapshot();
+        }
+        else if (witness.rule == "residual_rr")
+        {
+            // Rebuild the exact reduction chain named by the winning search.
+            CNF *current = new CNF(*residual.cnf);
+            vector<ProofNode> parents;
+            bool valid_chain = true;
+            for (const string &rule : witness.residual_reduction_rules)
+            {
+                ReductionStep step = apply_named_reduction(*current, rule);
+                if (!step.applied || !step.cnf)
+                {
+                    valid_chain = false;
+                    if (step.cnf) destroy_cnf(step.cnf);
+                    break;
+                }
+                ProofNode parent;
+                parent.type = "reduction";
+                parent.rule = rule;
+                parent.pivot_id = step.pivot_id;
+                parent.formula_snapshot = current->get_cert_snapshot();
+                parent.rr_witness_clauses = step.witness_clauses;
+                parents.push_back(move(parent));
+                destroy_cnf(current);
+                current = step.cnf;
+            }
+            child = ProofNode({0});
+            child.tau = 100.0;
+            child.formula_snapshot = current->get_cert_snapshot();
+            if (valid_chain)
+                for (auto it = parents.rbegin(); it != parents.rend(); ++it)
+                {
+                    it->children.push_back(move(child));
+                    child = move(*it);
+                }
+            else
+            {
+                child.type = "leaf";
+                child.rule = "residual_rr_reconstruction";
+                child.vec = witness.claimed_vector;
+                child.formula_snapshot = residual.cnf->get_cert_snapshot();
+            }
+            destroy_cnf(current);
+        }
+        else if (witness.rule == "residual_xiao")
+        {
+            child = residual.cnf->xiao_branch(1, "");
+        }
+        else
+        {
+            child.type = "leaf";
+            child.rule = witness.rule;
+            child.vec = witness.claimed_vector;
+            child.tau = branching_factor(child.vec);
+            child.formula_snapshot = residual.cnf->get_cert_snapshot();
+        }
+
+        ProofAlternative alternative;
+        alternative.offset = count_set_bits(residual.common_satisfied_mask);
+        alternative.decrease = residual.base_decrease;
+        alternative.represented_masks = group_masks;
+        alternative.proof = make_shared<ProofNode>(move(child));
+        node.alternatives.push_back(move(alternative));
+        destroy_cnf(residual.cnf);
+    }
 
     return node;
 }
@@ -1572,11 +1597,19 @@ string cnf_to_string(CNF *cnf)
 
 string cnf_to_max_string(CNF *cnf)
 {
-    vector<int> perm(ID_COUNTER - 1);
+    // Only ordinary Boolean variables may be renamed.  IDs 0 and 1 are the
+    // typed boundary symbols ? and ?+ and must remain fixed.
+    vector<int> variables;
+    for (Clause *clause : cnf->clauses)
+        for (Literal *literal : clause->lits)
+            if (literal->id >= 2)
+                variables.push_back(literal->id);
+    sort(variables.begin(), variables.end());
+    variables.erase(unique(variables.begin(), variables.end()), variables.end());
+
+    vector<int> perm(variables.size());
     for (int i = 0; i < (int)perm.size(); ++i)
-    {
-        perm[i] = i + 1;
-    }
+        perm[i] = i + 2;
 
     string max_str;
 
@@ -1590,8 +1623,15 @@ string cnf_to_max_string(CNF *cnf)
             vector<string> lits_str;
             for (auto lit : clause->lits)
             {
+                int mapped_id = lit->id;
+                if (lit->id >= 2)
+                {
+                    auto position = lower_bound(variables.begin(), variables.end(),
+                                                lit->id);
+                    mapped_id = perm[position - variables.begin()];
+                }
                 lits_str.push_back((lit->inv ? "~" : "=") +
-                                   to_string(lit->id == 0 ? 0 : perm[lit->id - 1]));
+                                   to_string(mapped_id));
             }
             sort(lits_str.begin(), lits_str.end());
             string clause_str = "(" + join(lits_str, "∨") + ")";
@@ -1683,6 +1723,9 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                                 {
                                     now_cnf->clauses[k]->lits.erase(&UNKNOWN_NOT_EMPTY_LITERAL);
                                     now_cnf->clauses[k]->lits.insert(&UNKNOWN_LITERAL);
+                                    for (auto &[tail_id, nonempty] :
+                                         now_cnf->clauses[k]->tail_atoms)
+                                        nonempty = false;
                                 }
 
                                 if (xm[xm_ind++])
@@ -1755,6 +1798,7 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                             if (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1)
                             {
                                 c->lits.erase(&UNKNOWN_LITERAL);
+                                c->tail_atoms.clear();
                             }
                         }
                     }
@@ -1791,7 +1835,7 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                 unique_children_ids.push_back(id);
             }
         }
-        global_logger.log_add_variable(cnf->node_id, cnf->get_snapshot(), VAR2ID[v_name], i, j, unique_children_ids);
+        global_logger.log_add_variable(cnf->node_id, cnf->get_cert_snapshot(), VAR2ID[v_name], i, j, unique_children_ids);
     }
 
     return ans;
@@ -1826,6 +1870,7 @@ add_new_var_in_place(CNF *cnf, string v_name,
             cnf_empty_space->clauses[pos]->lits.end())
     {
         cnf_empty_space->clauses[pos]->lits.erase(&UNKNOWN_LITERAL);
+        cnf_empty_space->clauses[pos]->tail_atoms.clear();
     }
 
     if (cnf_empty_space->clauses.size() != 0) {
@@ -1841,7 +1886,7 @@ add_new_var_in_place(CNF *cnf, string v_name,
         }
     }
 
-    global_logger.log_addpos(cnf->node_id, cnf->get_snapshot(), VAR2ID[v_name], pos, unique_children_ids);
+    global_logger.log_addpos(cnf->node_id, cnf->get_cert_snapshot(), VAR2ID[v_name], pos, unique_children_ids);
 
     return ans;
 }
@@ -1885,7 +1930,7 @@ DivideResult empty_divide(CNF *cnf)
         {
             ProofNode group_node = candidate->branch_group(ids);
             if (group_node.tau <= xiao_tau)
-                return group_node;
+                return candidate->branch_group(ids, -1, true);
         }
         return candidate->xiao_branch(1, "x");
     };
@@ -1900,11 +1945,15 @@ DivideResult empty_divide(CNF *cnf)
             // 1. Создаем ветку, где '?' означает пустоту (удаляем '?')
             CNF *cnf_empty = new CNF(*cnf);
             cnf_empty->clauses[i]->lits.erase(&UNKNOWN_LITERAL);
+            cnf_empty->clauses[i]->tail_atoms.clear();
 
             // 2. Создаем ветку, где '?' означает минимум 1 литерал (заменяем на '?+')
             CNF *cnf_not_empty = new CNF(*cnf);
             cnf_not_empty->clauses[i]->lits.erase(&UNKNOWN_LITERAL);
             cnf_not_empty->clauses[i]->lits.insert(&UNKNOWN_NOT_EMPTY_LITERAL);
+            for (auto &[tail_id, nonempty] :
+                 cnf_not_empty->clauses[i]->tail_atoms)
+                nonempty = true;
 
             // Худший случай при данном разбиении
             double worst_factor = max(best_tau(cnf_empty),
@@ -1940,7 +1989,7 @@ DivideResult empty_divide(CNF *cnf)
         // which survived the numerical first pass.
         best_split.proof_tree.type = "divide_clause";
         best_split.proof_tree.target_clause_idx = best_split.clause_idx;
-        best_split.proof_tree.formula_snapshot = cnf->get_snapshot();
+        best_split.proof_tree.formula_snapshot = cnf->get_cert_snapshot();
         best_split.proof_tree.children.push_back(
             best_proof(best_split.cnf_empty));
         best_split.proof_tree.children.push_back(
@@ -1949,7 +1998,7 @@ DivideResult empty_divide(CNF *cnf)
             best_split.proof_tree.children[0].tau,
             best_split.proof_tree.children[1].tau);
 
-        global_logger.log_divide(cnf->node_id, cnf->get_snapshot(),
+        global_logger.log_divide(cnf->node_id, cnf->get_cert_snapshot(),
                                  best_split.proof_tree.target_clause_idx,
                                  best_split.cnf_empty->node_id,
                                  best_split.cnf_not_empty->node_id);

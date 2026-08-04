@@ -504,6 +504,7 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         for (int k = 2; k <= ids.size(); ++k) {
             ProofNode approx_node = cnf->branch_group(ids, k);
             if (approx_node.tau < C) {
+                approx_node = cnf->branch_group(ids, k, true);
                 global_logger.log_proof_tree(cnf->node_id, approx_node);
         
                 flag = true;
@@ -518,6 +519,7 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
             }
             else
             {
+                full_group_node = cnf->branch_group(ids, -1, true);
                 global_logger.log_proof_tree(cnf->node_id, full_group_node);
             }
         }
