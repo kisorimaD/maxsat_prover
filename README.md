@@ -1,6 +1,6 @@
 # MaxSAT Prover
 
-MaxSAT Prover is an experimental certificate generator for the difficult
+maxsat_prover is an experimental certificate generator for the difficult
 `(3,2)`-literal case in an exact MaxSAT branching analysis. The C++ program
 enumerates finite CNF templates, tries assignment, grouping, and reduction
 strategies, computes their branching vectors, and writes a proof log. A
