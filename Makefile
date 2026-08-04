@@ -11,10 +11,10 @@ OBJECTS = $(patsubst $(SRCDIR)/%.cpp,$(BINDIR)/%.o,$(wildcard $(SRCDIR)/*.cpp))
 all: $(EXE)
 
 $(EXE): $(BINDIR) $(OBJECTS)
-	$(CXX) $(OBJECTS) -g -O0 --coverage -o $(EXE) $(LDFLAGS)
+	$(CXX) $(OBJECTS) -g -O3 -o $(EXE) $(LDFLAGS)
 	
 $(BINDIR)/%.o: $(SRCDIR)/%.cpp
-	$(CXX) $(CXXFLAGS) -O0 --coverage -g -c -MMD -o $@ $<
+	$(CXX) $(CXXFLAGS) -g -O3 -c -MMD -o $@ $<
 
 include $(wildcard $(BINDIR)/*.d)
 

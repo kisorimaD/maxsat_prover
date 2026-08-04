@@ -5,6 +5,7 @@
 #include <vector>
 #include <set>
 #include <functional>
+#include <memory>
 
 using namespace std;
 
@@ -20,12 +21,8 @@ struct
 } MaxSATSettings;
 
 struct GroupWitness {
-    std::string rule;            // "basic", "cross_reduce", "lemma2", "lemma3", "double_lemma3", "lemma4"
+    std::string rule;            // "basic", "lemma2", "lemma3", "double_lemma3", "lemma4"
     int basic_reduce_val = 0;    
-    
-    // Специфичные аргументы для cross_reduce
-    int cross_row_idx = -1;      
-    int cross_size = -1;         
 
     // Специфичные аргументы для лемм
     // Для lemma4: lemma_local_D хранит j (= min(pos,neg))
@@ -38,9 +35,12 @@ struct GroupWitness {
     // Constructive processing of the materialized residual formula.
     int residual_decrease = 0;
     vector<int> residual_vector;
+    vector<int> claimed_vector;
     vector<string> residual_reduction_rules;
     vector<vector<int>> residual_formula;
 };
+
+struct ProofAlternative;
 
 struct ProofNode {
     std::string type;       // "leaf", "reduction", "branch"
@@ -50,10 +50,15 @@ struct ProofNode {
     double tau = 100.0;     // Итоговый branching factor
    
     int target_clause_idx = -1; // Для узла empty_divide
+    std::vector<int> branch_ids;
     std::vector<int> partition;
     std::vector<std::vector<int>> formula_snapshot; 
     
     std::vector<ProofNode> children;
+    // Constructive alternatives used by plain and grouped branching.  The
+    // old `vec` remains a search heuristic only; the certificate logger emits
+    // these alternatives instead of trusting it.
+    std::vector<ProofAlternative> alternatives;
 
     std::map<int, int> subsumptions; 
     
@@ -63,10 +68,20 @@ struct ProofNode {
 
     int reduced_cnt_true = 0;
     int reduced_cnt_false = 0;
+    int offset_true = 0;
+    int offset_false = 0;
 
     ProofNode() {}
     
     ProofNode(std::vector<int> v) : type("leaf"), vec(v), tau(branching_factor(v)) {}
+};
+
+struct ProofAlternative {
+    int offset = 0;          // clauses certainly satisfied in this alternative
+    int decrease = 0;        // clauses removed from the global m-parameter
+    std::vector<int> assignments;
+    std::vector<int> represented_masks;
+    std::shared_ptr<ProofNode> proof;
 };
 
 
@@ -85,6 +100,12 @@ public:
 extern Literal UNKNOWN_LITERAL;
 extern Literal UNKNOWN_NOT_EMPTY_LITERAL; // Новый литерал ?+
 
+int fresh_tail_atom();
+
+// Snapshot-only encoding.  Ordinary literals never approach these values.
+constexpr int SNAP_TAIL_ANY_BASE = 1000000000;
+constexpr int SNAP_TAIL_NONEMPTY_BASE = 1500000000;
+
 struct LiteralPtrLess
 {
     bool operator()(const Literal *a, const Literal *b) const
@@ -98,17 +119,38 @@ struct LiteralPtrLess
 class Clause
 {
 public:
-    Clause() : lits({&UNKNOWN_LITERAL}), empty(true) {}
+    Clause() : lits({&UNKNOWN_LITERAL}), empty(true)
+    {
+        tail_atoms[fresh_tail_atom()] = false;
+    }
     Clause(const vector<Literal *> &lits_vec) : empty(lits_vec.size() == 1 && lits_vec[0] == &UNKNOWN_LITERAL)
     {
         for (auto lit : lits_vec)
             lits.insert(lit);
+        bool any = false;
+        bool nonempty = false;
+        for (auto lit : lits_vec)
+        {
+            any |= lit == &UNKNOWN_LITERAL;
+            nonempty |= lit == &UNKNOWN_NOT_EMPTY_LITERAL;
+        }
+        if (any || nonempty) tail_atoms[fresh_tail_atom()] = nonempty;
     }
-    Clause(const set<Literal *, LiteralPtrLess> &lits) : lits(lits), empty(lits.size() == 1 && *lits.begin() == &UNKNOWN_LITERAL) {}
-    Clause(const Clause &c) : lits(c.lits), empty(c.empty) {}
+    Clause(const vector<Literal *> &lits_vec, const map<int, bool> &tails)
+        : Clause(lits_vec) { tail_atoms = tails; }
+    Clause(const set<Literal *, LiteralPtrLess> &lits) : lits(lits), empty(lits.size() == 1 && *lits.begin() == &UNKNOWN_LITERAL)
+    {
+        bool any = lits.count(&UNKNOWN_LITERAL);
+        bool nonempty = lits.count(&UNKNOWN_NOT_EMPTY_LITERAL);
+        if (any || nonempty) tail_atoms[fresh_tail_atom()] = nonempty;
+    }
+    Clause(const Clause &c) : lits(c.lits), empty(c.empty), tail_atoms(c.tail_atoms) {}
 
     set<Literal *, LiteralPtrLess> lits;
     bool empty;
+    // Each entry is an independent boundary disjunction; the bool records
+    // that its underlying list is known nonempty.  Multiple entries mean OR.
+    map<int, bool> tail_atoms;
 };
 
 enum LitType
@@ -157,11 +199,13 @@ public:
 
     ProofNode branch(vector<int> ids);
 
-    ProofNode branch_group(vector<int> ids, int max_partitions = -1);
+    ProofNode branch_group(vector<int> ids, int max_partitions = -1,
+                           bool construct_proof = false);
 
     ProofNode xiao_branch(int depth, string first_var = "x");
 
     std::vector<std::vector<int>> get_snapshot();
+    std::vector<std::vector<int>> get_cert_snapshot();
 
     long long node_id;
 
