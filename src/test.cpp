@@ -142,7 +142,21 @@ void test_constructive_reductions()
     assert(lemma3.applied);
     assert(lemma3.rule == "lemma3");
     assert(lemma3.vec == vector<int>({1, 8}));
+
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+    ProofNode strict_lemma3 = lemma3_input->xiao_branch(0);
+    assert(strict_lemma3.rule.empty());
+    assert(strict_lemma3.vec == vector<int>({0}));
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
     delete_dummy_cnf(lemma3_input);
+
+    CNF *missing_position = create_dummy_cnf({{2}, {-2}});
+    vector<CNF *> unchanged = add_new_var_in_place(
+        missing_position, "missing_position_witness",
+        [](CNF *) { return -1; });
+    assert(unchanged.size() == 1);
+    assert(unchanged[0] == missing_position);
+    delete_dummy_cnf(missing_position);
 
     // Regression from the remaining (3,2)-case: after either assignment of
     // x, z becomes a 3-variable and Lemma 3 must be composed in the child.
@@ -407,7 +421,7 @@ function<int(CNF *)> create_pos_func(set<Literal *, LiteralPtrLess> need_lits, s
                 return i;
         }
 
-        return 0;
+        return -1;
     };
 }
 
@@ -546,9 +560,11 @@ void print_help_universal()
 {
     cout << "Список команд:\n";
     cout << "   add [var_name] [i] [j] [SINGLETON | ANY]\t\tДобавить переменную (i, j), если SINGLETON, то синглтон\n";
+    cout << "   addlit [i] [j] [SINGLETON | ANY]       \t\tДобавить тип в список возможных литералов на время запуска\n";
     cout << "   addpos [var_name] [need_names] [no_names]\t\tДобавить новую переменную в первую клозу, в которой есть все\n\t\t\t\t\t\t\tпеременные из need_names и нет ни одной из no_names. Ввод разделяется строчками\n";
-    cout << "   sv [mask]                               \t\tУстановить возможные типы литералов по битовой маске длины 9\n";
+    cout << "   sv [mask]                               \t\tУстановить возможные типы литералов по показанной битовой маске\n";
     cout << "   set [branching factor]                  \t\tУстановить порог С (по умолчанию равен 1.28854 или [6 6 5 5])\n";
+    cout << "   assumptions [on | off]                 \t\tРазрешить/запретить все named-assumption leaves\n";
     cout << "   branch                                  \t\tОбычное отсеивание + с группировкой бренчингом всех вариантов ниже С\n";
     cout << "   simple_branch                           \t\tОбычное отсеивание без группировки бренчингом всех вариантов ниже С\n";
     cout << "   target [i]                              \t\tОставить в рассмотрении только [i] вариант\n";
@@ -567,7 +583,13 @@ void test_universal()
 
     auto posfunc = create_pos_func(set<Literal *, LiteralPtrLess>(), set<Literal *, LiteralPtrLess>());
 
-    vector<LiteralDegType> variants = POSSIBLE_LITERALS;
+    vector<LiteralDegType> variants;
+    for (const LiteralDegType &literal : POSSIBLE_LITERALS)
+    {
+        // (2,1)-типы доступны через sv, но по умолчанию выключены.
+        if (literal.i != 2 || literal.j != 1)
+            variants.push_back(literal);
+    }
 
     CNF cnf;
 
@@ -623,6 +645,36 @@ void test_universal()
 
             cout << "В текущем рассмотрении [" << cur.size() << "] вариантов\n\n";
 
+            continue;
+        }
+
+        if (command == "addlit")
+        {
+            int i, j;
+            string type;
+            cin >> i >> j >> type;
+
+            if (i < 1 || j < 1 || (type != "SINGLETON" && type != "ANY"))
+            {
+                cout << "Ожидается: addlit [i >= 1] [j >= 1] [SINGLETON | ANY]\n\n";
+                continue;
+            }
+
+            LiteralDegType literal = {i, j, type == "SINGLETON" ? SINGLETON : ANY};
+            auto same_literal = [&](const LiteralDegType &other) {
+                return other.i == literal.i && other.j == literal.j &&
+                       other.type == literal.type;
+            };
+
+            if (find_if(POSSIBLE_LITERALS.begin(), POSSIBLE_LITERALS.end(), same_literal) ==
+                POSSIBLE_LITERALS.end())
+                POSSIBLE_LITERALS.push_back(literal);
+
+            if (find_if(variants.begin(), variants.end(), same_literal) == variants.end())
+                variants.push_back(literal);
+
+            cout << "Добавлен тип (" << i << ", " << j << ")-"
+                 << (literal.type == SINGLETON ? "singleton" : "any") << "\n\n";
             continue;
         }
 
@@ -716,22 +768,27 @@ void test_universal()
             continue;
         }
 
+        if (command == "assumptions")
+        {
+            string value;
+            cin >> value;
+            if (value != "on" && value != "off")
+            {
+                cout << "Ожидается assumptions on или assumptions off\n\n";
+                continue;
+            }
+            MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = value == "on";
+            cout << "Named assumptions: "
+                 << (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS ? "ON" : "OFF")
+                 << "\n\n";
+            continue;
+        }
+
         if (command == "sv")
         {
             cout << "Введите булеву маску возможных литералов для добавления в следующем порядке (0 - не добавлять / 1 - добавить):\n";
-            // cout << "{1, 3, ANY}\n{3, 1, ANY}\n{2, 2, ANY}\n{3, 2, ANY}\n{2, 3, ANY}\n{1, 4, ANY}\n{4, 1, ANY}\n{3, 1, SINGLETON}\n{4, 1, SINGLETON}}\n\n";
-            
-
             vector <LiteralDegType> new_pos_literals;
-            
-            vector <LiteralDegType> tmplte = {
-            {1, 3, SINGLETON},
-            {3, 1, SINGLETON},
-            {2, 2, ANY},
-            {3, 2, ANY},
-            {2, 3, ANY},
-            {1, 4, SINGLETON},
-            {4, 1, SINGLETON}};
+            const vector<LiteralDegType> &tmplte = POSSIBLE_LITERALS;
 
             for(LiteralDegType dt : tmplte)
             {
@@ -750,7 +807,15 @@ void test_universal()
             string msk;
             cin >> msk;
 
-            for(int i = 0; i < msk.size(); ++i)
+            if (msk.size() != tmplte.size() ||
+                msk.find_first_not_of("01") != string::npos)
+            {
+                cout << "Ожидается маска из " << tmplte.size()
+                     << " символов 0/1; список не изменён.\n\n";
+                continue;
+            }
+
+            for(size_t i = 0; i < msk.size(); ++i)
             {
                 if(msk[i] == '1')
                     new_pos_literals.push_back(tmplte[i]);

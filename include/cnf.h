@@ -15,10 +15,15 @@ extern int ID_COUNTER;
 
 double branching_factor(const vector<int> &a, double tol = 1e-12);
 
-struct
+struct MaxSATSettingsType
 {
     int MAXIMUM_CLAUSE_SIZE;
-} MaxSATSettings;
+    // Strict proof-search mode.  When false, heuristic leaves whose only
+    // justification is a named paper lemma are not considered at all.
+    bool ALLOW_NAMED_ASSUMPTIONS;
+};
+
+extern MaxSATSettingsType MaxSATSettings;
 
 struct GroupWitness {
     std::string rule;            // "basic", "lemma2", "lemma3", "double_lemma3", "lemma4"

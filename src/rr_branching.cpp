@@ -122,7 +122,9 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     // Lemmas 2 and 3 apply to arbitrary child formulas, not only to affine
     // residuals produced by group branching.  Keeping this before the depth
     // cutoff is essential: a depth-1 branch must see the lemma in its child.
-    DirectLemmaResult direct_lemma = find_best_direct_lemma23(*this);
+    DirectLemmaResult direct_lemma;
+    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+        direct_lemma = find_best_direct_lemma23(*this);
     if (direct_lemma.applied && direct_lemma.tau < granted)
     {
         granted = direct_lemma.tau;
@@ -137,55 +139,61 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     // For an (i,j)-literal a, the unit clauses must contain a itself
     // (the side with i occurrences), not its complement.  The resulting
     // branching vector is (i, 2j+1), where i >= j >= 2.
-    for (auto const &[id, s] : stats)
+    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
     {
-        auto try_lemma4 = [&](int i, int j, int unit_count)
+        for (auto const &[id, s] : stats)
         {
-            if (i >= j && j >= 2 && unit_count >= j - 1)
+            auto try_lemma4 = [&](int i, int j, int unit_count)
             {
-                vector<int> step4_branch = {i, 2 * j + 1};
-                double f = branching_factor(step4_branch);
-                if (f < granted)
+                if (i >= j && j >= 2 && unit_count >= j - 1)
                 {
-                    granted = f;
-                    granted_node.vec = step4_branch;
-                    granted_node.tau = f;
-                    granted_node.rule = "lemma4";
-                    granted_node.pivot_id = id;
-                    granted_node.formula_snapshot = this->get_cert_snapshot();
+                    vector<int> step4_branch = {i, 2 * j + 1};
+                    double f = branching_factor(step4_branch);
+                    if (f < granted)
+                    {
+                        granted = f;
+                        granted_node.vec = step4_branch;
+                        granted_node.tau = f;
+                        granted_node.rule = "lemma4";
+                        granted_node.pivot_id = id;
+                        granted_node.formula_snapshot = this->get_cert_snapshot();
+                    }
                 }
-            }
-        };
+            };
 
-        // a is the positive literal.
-        try_lemma4(s.pos_count, s.neg_count, s.pos_unit_count);
-        // a is the negative literal.
-        try_lemma4(s.neg_count, s.pos_count, s.neg_unit_count);
+            // a is the positive literal.
+            try_lemma4(s.pos_count, s.neg_count, s.pos_unit_count);
+            // a is the negative literal.
+            try_lemma4(s.neg_count, s.pos_count, s.neg_unit_count);
+        }
     }
 
     // Step 5.1.  This is a different case from Lemma 4: a unit clause
     // contains the minority literal of a (3,2)-variable.  Direct branching
     // removes the unit clause as well in the dominant branch and gives
     // (4,2), not (5,2).
-    for (auto const &[id, s] : stats)
+    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
     {
-        bool has_positive_dominant_case =
-            s.pos_count == 3 && s.neg_count == 2 && s.neg_unit_count >= 1;
-        bool has_negative_dominant_case =
-            s.neg_count == 3 && s.pos_count == 2 && s.pos_unit_count >= 1;
-
-        if (has_positive_dominant_case || has_negative_dominant_case)
+        for (auto const &[id, s] : stats)
         {
-            vector<int> step51_branch = {4, 2};
-            double f = branching_factor(step51_branch);
-            if (f < granted)
+            bool has_positive_dominant_case =
+                s.pos_count == 3 && s.neg_count == 2 && s.neg_unit_count >= 1;
+            bool has_negative_dominant_case =
+                s.neg_count == 3 && s.pos_count == 2 && s.pos_unit_count >= 1;
+
+            if (has_positive_dominant_case || has_negative_dominant_case)
             {
-                granted = f;
-                granted_node.vec = step51_branch;
-                granted_node.tau = f;
-                granted_node.rule = "step5.1";
-                granted_node.pivot_id = id;
-                granted_node.formula_snapshot = this->get_cert_snapshot();
+                vector<int> step51_branch = {4, 2};
+                double f = branching_factor(step51_branch);
+                if (f < granted)
+                {
+                    granted = f;
+                    granted_node.vec = step51_branch;
+                    granted_node.tau = f;
+                    granted_node.rule = "step5.1";
+                    granted_node.pivot_id = id;
+                    granted_node.formula_snapshot = this->get_cert_snapshot();
+                }
             }
         }
     }

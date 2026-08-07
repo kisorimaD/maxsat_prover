@@ -17,6 +17,8 @@
 
 using namespace std;
 
+MaxSATSettingsType MaxSATSettings{-1, true};
+
 map<int, string> ID2VAR;
 map<string, int> VAR2ID;
 int ID_COUNTER = 2;
@@ -1052,31 +1054,36 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
                 // Применение лемм на основе precomputed repr_stats
                 // -------------------------------------------------------
 
-                for (const DirectLemmaResult &direct_lemma :
-                     find_direct_lemma23_candidates(*group_residual.cnf))
+                if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
                 {
-                    GroupWitness witness;
-                    witness.rule = direct_lemma.rule;
-                    witness.lemma_var_id = direct_lemma.pivot_id;
-                    witness.second_lemma_var_id = direct_lemma.second_pivot_id;
-                    witness.lemma_local_D = direct_lemma.local_D;
-                    witness.lemma_pos_count = direct_lemma.pos_count;
-                    witness.lemma_neg_count = direct_lemma.neg_count;
-                    witness.claimed_vector = direct_lemma.vec;
-                    extra_choices.push_back({direct_lemma.vec, witness});
+                    for (const DirectLemmaResult &direct_lemma :
+                         find_direct_lemma23_candidates(*group_residual.cnf))
+                    {
+                        GroupWitness witness;
+                        witness.rule = direct_lemma.rule;
+                        witness.lemma_var_id = direct_lemma.pivot_id;
+                        witness.second_lemma_var_id = direct_lemma.second_pivot_id;
+                        witness.lemma_local_D = direct_lemma.local_D;
+                        witness.lemma_pos_count = direct_lemma.pos_count;
+                        witness.lemma_neg_count = direct_lemma.neg_count;
+                        witness.claimed_vector = direct_lemma.vec;
+                        extra_choices.push_back({direct_lemma.vec, witness});
+                    }
                 }
 
-                for (auto const &[id, st] : repr_stats)
+                if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
                 {
-                    int pos = st.pos_count;
-                    int neg = st.neg_count;
+                    for (auto const &[id, st] : repr_stats)
+                    {
+                        int pos = st.pos_count;
+                        int neg = st.neg_count;
 
                     // ---------- Лемма 4 ----------
                     // Условие: i >= j >= 2.
                     // Если хотя бы (j-1) клоз с самим (i,j)-литералом
                     // являются unit-клозами, вектор ветвления >= (i, 2j+1).
-                    if (pos >= 2 && neg >= 2)
-                    {
+                        if (pos >= 2 && neg >= 2)
+                        {
                         // Пробуем оба направления
                         for (int try_dir = 0; try_dir < 2; ++try_dir)
                         {
@@ -1098,6 +1105,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
                                 extra_choices.push_back(
                                     {{local_i4, 2 * local_j + 1}, witness});
                             }
+                        }
                         }
                     }
                 }
@@ -1536,8 +1544,13 @@ void preprocess(int maximum_clause_size)
     VAR2ID["?+"] = 1;
 
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
 
-    POSSIBLE_LITERALS = {{1, 3, SINGLETON}, {3, 1, SINGLETON}, {2, 2, ANY}, {3, 2, ANY}, {2, 3, ANY}, {1, 4, SINGLETON}, {4, 1, SINGLETON}};
+    POSSIBLE_LITERALS = {{1, 3, SINGLETON}, {3, 1, SINGLETON},
+                         {2, 2, ANY},       {3, 2, ANY},
+                         {2, 3, ANY},       {1, 4, SINGLETON},
+                         {4, 1, SINGLETON}, {2, 1, ANY},
+                         {2, 1, SINGLETON}};
 
     ifstream infile("groups3.txt");
     if (!infile.is_open())
@@ -1853,6 +1866,12 @@ add_new_var_in_place(CNF *cnf, string v_name,
                      vector<LiteralDegType> variants)
 {
     int pos = need_index_func(cnf);
+
+    // This formula has no wildcard clause satisfying the positional query.
+    // Keep it in the frontier unchanged instead of silently exposing the new
+    // variable in clause zero (which does not satisfy the query).
+    if (pos < 0)
+        return {cnf};
 
     vector<CNF *> ans;
 

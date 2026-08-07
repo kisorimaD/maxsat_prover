@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 
 CertLogger global_logger;
 std::ofstream out;
@@ -126,6 +127,9 @@ std::string CertLogger::proof_node_to_json(const ProofNode &node)
 
     if (node.type == "leaf" && !node.rule.empty())
     {
+        if (!MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+            throw std::logic_error(
+                "strict proof mode reached a named assumption: " + node.rule);
         ss << "{\"kind\":\"assumption\",\"formula\":" << formula
            << ",\"name\":\"" << node.rule << "\",\"vector\":[";
         for (size_t i = 0; i < node.vec.size(); ++i)
