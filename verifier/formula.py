@@ -1,5 +1,12 @@
 from itertools import permutations, product
 
+MAX_CLAUSES = 32767
+
+
+def check_formula_size(formula):
+    if len(formula) > MAX_CLAUSES:
+        raise ValueError(f"formula exceeds {MAX_CLAUSES} clauses")
+
 
 def _literal(value):
     if (isinstance(value, tuple) and len(value) == 3 and value[0] == "tail"
@@ -23,6 +30,8 @@ def _key(literal):
 
 
 def normalize_formula(value):
+    if isinstance(value, (list, tuple)):
+        check_formula_size(value)
     if not isinstance(value, list):
         # Internal normalized formulas can safely be passed through.
         if isinstance(value, tuple):
@@ -43,6 +52,7 @@ def ordered_formula(value):
     """Parse literals but preserve producer clause indices for refine rules."""
     if not isinstance(value, list):
         raise ValueError("formula must be a list of clauses")
+    check_formula_size(value)
     result = []
     for clause in value:
         if not isinstance(clause, list):

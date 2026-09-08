@@ -8,8 +8,59 @@
 #include <sstream>
 #include <iomanip>
 #include <functional>
+#include <stdexcept>
+#include <cmath>
 
 using namespace std;
+
+void test_safety()
+{
+    Literal safety_x("safety_x");
+    auto rejected = [](auto action) {
+        bool caught = false;
+        try { action(); } catch (const invalid_argument &) { caught = true; }
+        assert(caught);
+    };
+    unique_ptr<CNF, decltype(&destroy_cnf)> formula(new CNF(), destroy_cnf);
+    for (int i = 0; i < MAX_MASK_BITS; ++i)
+        formula->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false)}));
+    assert(!formula->branch({2}).alternatives.empty());
+    formula->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false)}));
+    rejected([&] { formula->branch({2}); });
+    rejected([&] { formula->branch_group({2}); });
+    assert(!materialize_group_residual(*formula, {2}, {0}).valid);
+    delete formula->clauses.back();
+    formula->clauses.pop_back();
+    rejected([&] { formula->branch({2, 2}); });
+    vector<int> ids;
+    for (int i = 0; i <= MAX_MASK_BITS; ++i) ids.push_back(i + 2);
+    rejected([&] { formula->branch(ids); });
+    string diag;
+    assert(!check_group_validity({0, 0}, 1, diag));
+    assert(!check_group_validity({-1, 0}, 1, diag));
+    assert(!check_group_validity({0, 2}, 1, diag));
+    assert(!check_group_validity({0}, 31, diag));
+    vector<int> oversized_group(32);
+    for (int i = 0; i < 32; ++i) oversized_group[i] = i;
+    assert(!check_group_validity(oversized_group, 5, diag));
+    rejected([] { validate_degree(1, 3, SINGLETON); });
+    rejected([] { validate_degree(1, 4, SINGLETON); });
+    validate_degree(3, 1, SINGLETON);
+
+    unique_ptr<CNF, decltype(&destroy_cnf)> parent(new CNF(), destroy_cnf);
+    parent->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false),
+                                                         &UNKNOWN_NOT_EMPTY_LITERAL}));
+    auto children = add_new_var_in_place(parent.get(), "safety_y", [](CNF*) { return 0; },
+                                         {{3, 1, SINGLETON}});
+    assert(!children.empty());
+    for (CNF *child : children)
+    {
+        assert(analyze_formula(*child).count(VAR2ID.at("safety_y")));
+        assert(child->get_cert_snapshot() != parent->get_cert_snapshot());
+        destroy_cnf(child);
+    }
+    cout << "Mask bounds and exposure safety tests passed\n";
+}
 
 
 // Вспомогательная функция для сборки временного CNF из слепка
@@ -226,12 +277,12 @@ void test_subset_func()
     while (true)
     {
         int A, B;
-        cin >> A;
+        if (!(cin >> A)) break;
 
         if (A == -1)
             break;
 
-        cin >> B;
+        if (!(cin >> B)) break;
 
         cout << (is_A_subset_of_B(A, B) ? "YES\n" : "NO\n");
     }
@@ -383,7 +434,8 @@ function<int(CNF *)> create_pos_func(set<Literal *, LiteralPtrLess> need_lits, s
         {
             Clause *now_clause = cnf->clauses[i];
 
-            if(now_clause->lits.find(&UNKNOWN_LITERAL) == now_clause->lits.end())
+            if (!now_clause->lits.count(&UNKNOWN_LITERAL) &&
+                !now_clause->lits.count(&UNKNOWN_NOT_EMPTY_LITERAL))
             {
                 continue;
             }
@@ -495,7 +547,8 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
     cout << "Осталось [" << filtered_variants.size() << "]. Начинается фильтрация с группировкой\n";
 
     bool need_pb = false;
-    if ((filtered_variants.size() << (2 * ids.size())) > 1000)
+    if (!filtered_variants.empty() &&
+        (ids.size() >= 5 || filtered_variants.size() > (1000u >> (2 * ids.size()))))
     {
         need_pb = true;
         cout << "\nWARNING! Слишком большой размер оставшегося массива, бренчинг с группировкой может работать очень медленно.\n\n";
@@ -559,11 +612,11 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
 void print_help_universal()
 {
     cout << "Список команд:\n";
-    cout << "   add [var_name] [i] [j] [SINGLETON | ANY]\t\tДобавить переменную (i, j), если SINGLETON, то синглтон\n";
+    cout << "   add [var_name] [i] [j] [SINGLETON | ANY]\t\tЗадать корневое семейство один раз; SINGLETON требует j = 1\n";
     cout << "   addlit [i] [j] [SINGLETON | ANY]       \t\tДобавить тип в список возможных литералов на время запуска\n";
     cout << "   addpos [var_name] [need_names] [no_names]\t\tДобавить новую переменную в первую клозу, в которой есть все\n\t\t\t\t\t\t\tпеременные из need_names и нет ни одной из no_names. Ввод разделяется строчками\n";
     cout << "   sv [mask]                               \t\tУстановить возможные типы литералов по показанной битовой маске\n";
-    cout << "   set [branching factor]                  \t\tУстановить порог С (по умолчанию равен 1.28854 или [6 6 5 5])\n";
+    cout << "   set [branching factor]                  \t\tУстановить порог C (по умолчанию 1.2873)\n";
     cout << "   assumptions [on | off]                 \t\tРазрешить/запретить все named-assumption leaves\n";
     cout << "   branch                                  \t\tОбычное отсеивание + с группировкой бренчингом всех вариантов ниже С\n";
     cout << "   simple_branch                           \t\tОбычное отсеивание без группировки бренчингом всех вариантов ниже С\n";
@@ -577,6 +630,40 @@ void print_help_universal()
     cout << "   help                                    \t\tВывести список команд (этот)\n";
     cout << "   exit                                    \t\tВыйти из тестирования\n\n";
 }
+namespace {
+template<class... Values>
+void read_arguments(Values&... values)
+{
+    if (!(cin >> ... >> values))
+        throw runtime_error("Incomplete or invalid command arguments");
+}
+
+void read_command_line(string &line)
+{
+    if (!getline(cin, line))
+        throw runtime_error("Incomplete multiline command");
+}
+
+// Frontiers borrow pointers; this owner releases formulas once they leave cur.
+class FrontierOwner {
+    using Owner = unique_ptr<CNF, decltype(&destroy_cnf)>;
+    map<CNF*, Owner> owned;
+public:
+    void adopt(const vector<CNF*> &formulas) {
+        for (CNF *formula : formulas)
+            if (!owned.count(formula))
+                owned.emplace(formula, Owner(formula, destroy_cnf));
+    }
+    void retain(const vector<CNF*> &formulas) {
+        adopt(formulas);
+        set<CNF*> live(formulas.begin(), formulas.end());
+        for (auto it = owned.begin(); it != owned.end(); )
+            if (!live.count(it->first)) it = owned.erase(it);
+            else ++it;
+    }
+};
+}
+
 void test_universal()
 {
     progress_counter_test = 0;
@@ -591,9 +678,10 @@ void test_universal()
             variants.push_back(literal);
     }
 
-    CNF cnf;
-
-    vector<CNF *> cur = {&cnf};
+    FrontierOwner owner;
+    vector<CNF *> cur = {new CNF()};
+    owner.adopt(cur);
+    bool root_initialized = false;
 
     vector<int> ids;
     vector<string> vars;
@@ -608,7 +696,8 @@ void test_universal()
     while (command != "exit")
     {
         cout << "Введите команду: ";
-        cin >> command;
+        owner.retain(cur);
+        if (!(cin >> command)) break;
 
         if (command == "add")
         {
@@ -616,9 +705,14 @@ void test_universal()
             int i, j;
             string type;
 
-            cin >> var_name >> i >> j >> type;
+            read_arguments(var_name, i, j, type);
 
+            if (root_initialized)
+                throw invalid_argument("add can only initialize the root; use addpos");
+            if (type != "SINGLETON" && type != "ANY" && type != "a")
+                throw invalid_argument("expected SINGLETON or ANY");
             LitType new_type = type == "SINGLETON" ? SINGLETON : ANY;
+            validate_degree(i, j, new_type);
 
             if (VAR2ID.count(var_name) != 0)
             {
@@ -637,6 +731,8 @@ void test_universal()
             for (CNF *cnf : cur)
             {
                 auto new_vars = add_new_var(cnf, var_name, i, j, new_type);
+                owner.adopt(new_vars);
+                root_initialized = true;
                 new_lit_variants.resize(new_lit_variants.size() + new_vars.size());
                 copy(new_vars.begin(), new_vars.end(), new_lit_variants.rbegin());
             }
@@ -652,7 +748,7 @@ void test_universal()
         {
             int i, j;
             string type;
-            cin >> i >> j >> type;
+            read_arguments(i, j, type);
 
             if (i < 1 || j < 1 || (type != "SINGLETON" && type != "ANY"))
             {
@@ -661,6 +757,7 @@ void test_universal()
             }
 
             LiteralDegType literal = {i, j, type == "SINGLETON" ? SINGLETON : ANY};
+            validate_degree(i, j, literal.type);
             auto same_literal = [&](const LiteralDegType &other) {
                 return other.i == literal.i && other.j == literal.j &&
                        other.type == literal.type;
@@ -680,8 +777,9 @@ void test_universal()
 
         if (command == "addpos")
         {
+            if (!root_initialized) throw invalid_argument("initialize the root with add first");
             string var_name;
-            cin >> var_name;
+            read_arguments(var_name);
 
             if (VAR2ID.count(var_name) != 0)
             {
@@ -695,8 +793,8 @@ void test_universal()
 
             string l;
 
-            getline(cin, l);
-            getline(cin, l);
+            read_command_line(l);
+            read_command_line(l);
 
             stringstream ss(l);
             string token;
@@ -706,21 +804,22 @@ void test_universal()
             cout << "NEED_NAMES:\t";
             while (getline(ss, token, ' '))
             {
+                if (token.empty()) continue;
                 // need_names.push_back(token);
                 if (token[0] == '-')
                 {
                     cout << "¬" << token.substr(1) << " ";
-                    need_lits.insert(new Literal(token.substr(1), true));
+                    need_lits.insert(intern_literal(Literal(token.substr(1)).id, true));
                 }
                 else
                 {
                     cout << token << " ";
-                    need_lits.insert(new Literal(token));
+                    need_lits.insert(intern_literal(Literal(token).id, false));
                 }
             }
             cout << endl;
 
-            getline(cin, l);
+            read_command_line(l);
             ss = stringstream(l);
 
             set<Literal *, LiteralPtrLess> no_lits;
@@ -728,15 +827,16 @@ void test_universal()
             cout << "NO_NAMES:\t";
             while (getline(ss, token, ' '))
             {
+                if (token.empty()) continue;
                 if (token[0] == '-')
                 {
                     cout << "¬" << token.substr(1) << " ";
-                    no_lits.insert(new Literal(token.substr(1), true));
+                    no_lits.insert(intern_literal(Literal(token.substr(1)).id, true));
                 }
                 else
                 {
                     cout << token << " ";
-                    no_lits.insert(new Literal(token));
+                    no_lits.insert(intern_literal(Literal(token).id, false));
                 }
             }
             cout << endl;
@@ -748,6 +848,7 @@ void test_universal()
             for (CNF *cnf : cur)
             {
                 auto new_vars = add_new_var_in_place(cnf, var_name, _posfunc, variants);
+                owner.adopt(new_vars);
                 new_lit_variants.resize(new_lit_variants.size() + new_vars.size());
                 copy(new_vars.begin(), new_vars.end(), new_lit_variants.rbegin());
             }
@@ -761,7 +862,8 @@ void test_universal()
 
         if (command == "set")
         {
-            cin >> C;
+            read_arguments(C);
+            if (!isfinite(C) || C <= 1) throw invalid_argument("target must exceed 1");
 
             cout << "C = " << C << "\n\n";
 
@@ -771,7 +873,7 @@ void test_universal()
         if (command == "assumptions")
         {
             string value;
-            cin >> value;
+            read_arguments(value);
             if (value != "on" && value != "off")
             {
                 cout << "Ожидается assumptions on или assumptions off\n\n";
@@ -805,7 +907,7 @@ void test_universal()
             }
 
             string msk;
-            cin >> msk;
+            read_arguments(msk);
 
             if (msk.size() != tmplte.size() ||
                 msk.find_first_not_of("01") != string::npos)
@@ -840,8 +942,8 @@ void test_universal()
         {
             string l;
 
-            getline(cin, l);
-            getline(cin, l);
+            read_command_line(l);
+            read_command_line(l);
 
             stringstream ss(l);
             string token;
@@ -851,21 +953,22 @@ void test_universal()
             cout << "NEED_NAMES:\t";
             while (getline(ss, token, ' '))
             {
+                if (token.empty()) continue;
                 // need_names.push_back(token);
                 if (token[0] == '-')
                 {
                     cout << "¬" << token.substr(1) << " ";
-                    need_lits.insert(new Literal(token.substr(1), true));
+                    need_lits.insert(intern_literal(Literal(token.substr(1)).id, true));
                 }
                 else
                 {
                     cout << token << " ";
-                    need_lits.insert(new Literal(token));
+                    need_lits.insert(intern_literal(Literal(token).id, false));
                 }
             }
             cout << endl;
 
-            getline(cin, l);
+            read_command_line(l);
             ss = stringstream(l);
 
             set<Literal *, LiteralPtrLess> no_lits;
@@ -873,15 +976,16 @@ void test_universal()
             cout << "NO_NAMES:\t";
             while (getline(ss, token, ' '))
             {
+                if (token.empty()) continue;
                 if (token[0] == '-')
                 {
                     cout << "¬" << token.substr(1) << " ";
-                    no_lits.insert(new Literal(token.substr(1), true));
+                    no_lits.insert(intern_literal(Literal(token.substr(1)).id, true));
                 }
                 else
                 {
                     cout << token << " ";
-                    no_lits.insert(new Literal(token));
+                    no_lits.insert(intern_literal(Literal(token).id, false));
                 }
             }
             cout << endl;
@@ -901,7 +1005,8 @@ void test_universal()
         {
             int depth;
 
-            cin >> depth;
+            read_arguments(depth);
+            if (depth < 0) throw invalid_argument("depth must be nonnegative");
 
             branch_epoch_universal(cur, ids, C, false, true, depth);
             cout << endl;
@@ -918,7 +1023,7 @@ void test_universal()
         if (command == "head")
         {
             int n;
-            cin >> n;
+            read_arguments(n);
 
             for (int i = 0; i < min((int)cur.size(), n); ++i)
             {
@@ -932,7 +1037,7 @@ void test_universal()
         if (command == "print")
         {
             int i;
-            cin >> i;
+            read_arguments(i);
 
             if (i < 0 || i >= (int)cur.size())
             {
@@ -1071,7 +1176,7 @@ void test_universal()
         if (command == "empty_divide")
         {
             int i;
-            cin >> i;
+            read_arguments(i);
 
             if (i == -1)
             {
@@ -1083,6 +1188,7 @@ void test_universal()
                     DivideResult res = empty_divide(cnf);
                     if (res.cnf_empty != nullptr)
                     {
+                        owner.adopt({res.cnf_empty, res.cnf_not_empty});
                         next_cur.push_back(res.cnf_empty);
                         next_cur.push_back(res.cnf_not_empty);
                         success_count++;
@@ -1130,8 +1236,8 @@ void test_universal()
         if (command == "factor")
         {
             std::string l;
-            getline(cin, l);
-            getline(cin, l);
+            read_command_line(l);
+            read_command_line(l);
 
             stringstream ss(l);
             string token;
@@ -1140,7 +1246,7 @@ void test_universal()
 
             while (getline(ss, token, ' '))
             {
-                C_branch.push_back(stoi(token));
+                if (!token.empty()) C_branch.push_back(stoi(token));
             }
             cout << endl;
 
@@ -1152,7 +1258,7 @@ void test_universal()
         if (command == "target")
         {
             int i;
-            cin >> i;
+            read_arguments(i);
 
             cur = {cur.at(i)};
             cout << "\n\n";
@@ -1162,8 +1268,9 @@ void test_universal()
         if (command == "drop")
         {
             int i;
-            cin >> i;
+            read_arguments(i);
 
+            if (i < 0 || i >= (int)cur.size()) throw out_of_range("drop index out of range");
             cur.erase(cur.begin() + i);
             
             cout << "Done.\n\n";

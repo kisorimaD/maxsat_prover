@@ -14,13 +14,14 @@ class VerificationError(Exception):
 
 
 class Checker:
-    def __init__(self, numerator, denominator):
+    def __init__(self, numerator, denominator, legacy=False):
         self.numerator = numerator
         self.denominator = denominator
         self.nodes = 0
         self.strategies = 0
         self.max_depth = 0
         self.assumptions = []
+        self.legacy = legacy
 
     def fail(self, path, message):
         raise VerificationError(
@@ -59,7 +60,7 @@ class Checker:
             self.fail(path, "refine must have nonempty children")
         try:
             expected = {canonical_formula(formula)
-                        for formula in expected_children(node)}
+                        for formula in expected_children(node, legacy=self.legacy)}
             actual = {canonical_formula(child["formula"]) for child in children}
         except (KeyError, TypeError, ValueError) as error:
             self.fail(path, str(error))
@@ -122,8 +123,13 @@ class Checker:
                        for child in child_formulas):
                     raise ValueError("semantic child introduces an unrelated tail")
                 boundary_ids = sorted(parent_tails)
-                parent_values = optimum_vector(formula, boundary_ids)
-                child_values = [optimum_vector(child, boundary_ids)
+                for alternative in alternatives:
+                    offset = alternative.get("offset")
+                    if offset != "infer" and (type(offset) is not int or
+                                               not 0 <= offset <= len(formula)):
+                        raise ValueError("offset must be an integer between zero and parent size")
+                parent_values = optimum_vector(formula, boundary_ids).astype(np.int32)
+                child_values = [optimum_vector(child, boundary_ids).astype(np.int32)
                                 for child in child_formulas]
                 if any(alternative["offset"] == "infer"
                        for alternative in alternatives):
@@ -172,11 +178,18 @@ def load_and_check(filename):
         certificate = json.load(stream)
     if set(certificate) != {"format", "target", "proof"}:
         raise VerificationError("top-level fields are invalid")
-    if certificate["format"] != "maxsat-local-proof-v1":
+    if certificate["format"] not in ("maxsat-local-proof-v1", "maxsat-local-proof-v2"):
         raise VerificationError("unknown certificate format")
     target = certificate["target"]
     if set(target) != {"numerator", "denominator"}:
         raise VerificationError("invalid target")
-    checker = Checker(target["numerator"], target["denominator"])
-    checker.check(certificate["proof"])
+    legacy = certificate["format"] == "maxsat-local-proof-v1"
+    checker = Checker(target["numerator"], target["denominator"], legacy=legacy)
+    proof = certificate["proof"]
+    # v1 encoded the initial family declaration as an exposure of []. It is
+    # a declaration of the root family, never a coverage claim about [].
+    if legacy and proof.get("rule") == "expose_variable":
+        from .refine import declared_root
+        proof = declared_root(proof, legacy=True)
+    checker.check(proof)
     return checker

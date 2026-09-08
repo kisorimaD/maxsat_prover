@@ -9,6 +9,9 @@
 
 using namespace std;
 
+// Signed int masks deliberately leave the sign bit unused.
+constexpr int MAX_MASK_BITS = 30;
+
 extern map<int, string> ID2VAR;
 extern map<string, int> VAR2ID;
 extern int ID_COUNTER;
@@ -164,6 +167,8 @@ enum LitType
     NON_SINGLETON,
     ANY
 };
+
+void validate_degree(int positive, int negative, LitType type);
 
 struct LiteralDegType
 {

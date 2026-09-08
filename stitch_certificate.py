@@ -47,8 +47,12 @@ def assemble_certificate(input_file, output_file, numerator=12872, denominator=1
     if built != set(nodes):
         raise ValueError(f"unreachable nodes: {sorted(set(nodes) - built)}")
 
+    if root.get("kind") == "root_family":
+        from verifier.refine import declared_root
+        root = declared_root(root)
+
     certificate = {
-        "format": "maxsat-local-proof-v1",
+        "format": "maxsat-local-proof-v2",
         "target": {"numerator": numerator, "denominator": denominator},
         "proof": root,
     }

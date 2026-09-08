@@ -22,7 +22,9 @@ void print_help()
     cout << "addvar\tTest add_new_var func\n";
     cout << "nounknown\tTest no unknown literals\n";
     cout << "test\tInteractive test for branching etc.\n";
-    cout << "start\tStart proof algorithm\n";
+    cout << "reductions\tCheck constructive reductions\n";
+    cout << "groups3\tCheck precomputed groups\n";
+    cout << "safety\tCheck bounds and exposure preconditions\n";
 }
 
 void fill_test_names()
@@ -37,6 +39,7 @@ void fill_test_names()
     test_names["test"] = test_universal;
     test_names["groups3"] = test_groups3_validity;
     test_names["reductions"] = test_constructive_reductions;
+    test_names["safety"] = test_safety;
 
     test_names["help"] = print_help;
     test_names["--help"] = print_help;
@@ -45,15 +48,12 @@ void fill_test_names()
 
 int main(int argc, const char *argv[])
 {
-    global_logger.init("pre_certificate.jsonl");
-
-    preprocess();
     fill_test_names();
 
     if (argc != 2)
     {
         print_help();
-        return 0;
+        return argc == 1 ? 0 : 1;
     }
 
     string test_name = argv[1];
@@ -61,8 +61,25 @@ int main(int argc, const char *argv[])
     if (test_names.count(test_name) == 0)
     {
         print_help();
-        return 0;
+        return 1;
     }
 
-    test_names[test_name]();
+    if (test_name == "help" || test_name == "--help")
+    {
+        print_help();
+        return 0;
+    }
+    try
+    {
+        preprocess();
+        if (test_name == "test") global_logger.init("pre_certificate.jsonl");
+        test_names[test_name]();
+        global_logger.close();
+    }
+    catch (const std::exception &error)
+    {
+        global_logger.close();
+        cerr << "ERROR: " << error.what() << '\n';
+        return 1;
+    }
 }

@@ -2,11 +2,12 @@ from itertools import product
 
 import numpy as np
 
-from .formula import is_tail, variables
+from .formula import check_formula_size, is_tail, variables
 
 
 def optimum_vector(formula, boundary_ids):
     """OPT for every boundary valuation, computed independently and exactly."""
+    check_formula_size(formula)
     positions = {tail_id: index for index, tail_id in enumerate(boundary_ids)}
     count = 1 << len(boundary_ids)
     boundary_values = np.arange(count, dtype=np.uint64)

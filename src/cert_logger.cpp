@@ -12,7 +12,7 @@ void CertLogger::init(const std::string &filename)
 {
     out.open(filename, std::ios::out | std::ios::trunc);
     if (!out.is_open())
-        std::cerr << "Не удалось открыть файл для логов: " << filename << '\n';
+        throw std::runtime_error("Cannot open certificate log: " + filename);
 }
 
 void CertLogger::close()
@@ -64,18 +64,20 @@ void write_ids(std::ostringstream &ss, const std::vector<long long> &ids)
 
 void CertLogger::log_add_variable(
     long long parent_id, const std::vector<std::vector<int>> &snapshot,
-    int var_id, int pos_deg, int neg_deg,
+    int var_id, int pos_deg, int neg_deg, LitType type,
     const std::vector<long long> &children_ids)
 {
     if (!out.is_open()) return;
+    if (!snapshot.empty())
+        throw std::logic_error("add declares the root family only; use addpos for refinements");
     std::ostringstream ss;
     ss << "{\"node_id\":" << parent_id
-       << ",\"kind\":\"refine\",\"rule\":\"expose_variable\""
+       << ",\"kind\":\"root_family\""
        << ",\"formula\":" << formula_to_json(snapshot)
        << ",\"variable\":" << var_id
        << ",\"positive\":" << pos_deg
        << ",\"negative\":" << neg_deg
-       << ",\"singleton\":" << ((pos_deg == 1 || neg_deg == 1) ? "true" : "false")
+       << ",\"singleton\":" << (type == SINGLETON ? "true" : "false")
        << ",\"children_ids\":";
     write_ids(ss, children_ids);
     ss << "}\n";
@@ -84,7 +86,8 @@ void CertLogger::log_add_variable(
 
 void CertLogger::log_addpos(
     long long parent_id, const std::vector<std::vector<int>> &snapshot,
-    int var_id, int target_pos, const std::vector<long long> &children_ids)
+    int var_id, int target_pos, const std::vector<LiteralDegType> &degrees,
+    const std::vector<long long> &children_ids)
 {
     if (!out.is_open()) return;
     std::ostringstream ss;
@@ -92,8 +95,14 @@ void CertLogger::log_addpos(
        << ",\"kind\":\"refine\",\"rule\":\"expose_at_clause\""
        << ",\"formula\":" << formula_to_json(snapshot)
        << ",\"variable\":" << var_id
-       << ",\"clause\":" << target_pos
-       << ",\"children_ids\":";
+       << ",\"clause\":" << target_pos << ",\"degrees\":[";
+    for (size_t i = 0; i < degrees.size(); ++i)
+    {
+        if (i) ss << ',';
+        ss << '[' << degrees[i].i << ',' << degrees[i].j << ','
+           << (degrees[i].type == SINGLETON ? "true" : "false") << ']';
+    }
+    ss << "],\"children_ids\":";
     write_ids(ss, children_ids);
     ss << "}\n";
     out << ss.str();

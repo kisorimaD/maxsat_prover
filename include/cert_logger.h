@@ -11,10 +11,10 @@ public:
     void close();
 
     // Логирование операции добавления переменной с известными степенями
-    void log_add_variable(long long parent_id, const std::vector<std::vector<int>>& snap, int var_id, int pos_deg, int neg_deg, const std::vector<long long>& children_ids);
+    void log_add_variable(long long parent_id, const std::vector<std::vector<int>>& snap, int var_id, int pos_deg, int neg_deg, LitType type, const std::vector<long long>& children_ids);
     
     // Логирование целевого макро-добавления (addpos)
-    void log_addpos(long long parent_id, const std::vector<std::vector<int>>& snap, int var_id, int target_pos, const std::vector<long long>& children_ids);
+    void log_addpos(long long parent_id, const std::vector<std::vector<int>>& snap, int var_id, int target_pos, const std::vector<LiteralDegType>& degrees, const std::vector<long long>& children_ids);
     
     // Логирование макро-разделения (empty_divide)
     void log_divide(long long parent_id, const std::vector<std::vector<int>>& snap, int target_idx, long long child_empty, long long child_not_empty);

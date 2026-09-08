@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <unordered_set>
+#include <stdexcept>
 
 // #include <fstream>
 
@@ -27,7 +28,7 @@ Literal UNKNOWN_NOT_EMPTY_LITERAL = Literal(1, false);
 
 vector<LiteralDegType> POSSIBLE_LITERALS;
 
-Literal::Literal() { id = 0; };
+Literal::Literal() : id(0), inv(false) {};
 
 Literal::Literal(string var, bool is_inv)
 {
@@ -131,11 +132,35 @@ bool is_A_subset_of_B(int A, int B)
     return A_without_B == 0;
 }
 
+void validate_degree(int positive, int negative, LitType type)
+{
+    if (positive < 1 || negative < 1 || positive > MAX_MASK_BITS ||
+        negative > MAX_MASK_BITS - positive)
+        throw invalid_argument("degrees must be positive and total at most 30");
+    if (type == SINGLETON && negative != 1)
+        throw invalid_argument("SINGLETON requires negative degree 1");
+}
+
+static void validate_mask_input(const CNF &cnf, const vector<int> &ids)
+{
+    if (cnf.clauses.size() > MAX_MASK_BITS || ids.size() > MAX_MASK_BITS)
+        throw invalid_argument("branch masks support at most 30 clauses and 30 variables");
+    set<int> unique_ids(ids.begin(), ids.end());
+    if (unique_ids.size() != ids.size() ||
+        any_of(ids.begin(), ids.end(), [](int id) { return id < 2; }))
+        throw invalid_argument("branch variables must be distinct ordinary IDs");
+}
+
 void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask,
                         vector<int> &reduced_clauses,
                         vector<int> &no_clauses_mask)
 {
+    validate_mask_input(cnf, ids);
     int k = ids.size();
+    size_t count = size_t(1) << k;
+    if (clauses_mask.size() != count || reduced_clauses.size() != count ||
+        no_clauses_mask.size() != count)
+        throw invalid_argument("incorrect assignment mask buffer size");
 
     map<int, int> id2ind;
 
@@ -209,7 +234,7 @@ int count_set_bits(int n)
 
 ProofNode CNF::branch(vector<int> ids)
 {
-
+    validate_mask_input(*this, ids);
     int k = ids.size();
 
     vector<int> branch;
@@ -486,6 +511,8 @@ GroupResidual materialize_group_residual(const CNF &cnf,
                                          const vector<int> &group_masks)
 {
     GroupResidual result;
+    try { validate_mask_input(cnf, ids); }
+    catch (const invalid_argument &error) { result.error = error.what(); return result; }
     int k = (int)ids.size();
     int group_size = (int)group_masks.size();
 
@@ -494,13 +521,19 @@ GroupResidual materialize_group_residual(const CNF &cnf,
         result.error = "group size is not a positive power of two";
         return result;
     }
-    if (group_size >= 31 || cnf.clauses.size() >= 31)
+    if (group_size > MAX_MASK_BITS)
     {
         result.error = "group residual currently requires masks narrower than 31 bits";
         return result;
     }
 
     set<int> unique_masks(group_masks.begin(), group_masks.end());
+    if (any_of(group_masks.begin(), group_masks.end(),
+               [k](int mask) { return mask < 0 || mask >= (1 << k); }))
+    {
+        result.error = "group assignment mask out of range";
+        return result;
+    }
     if ((int)unique_masks.size() != group_size)
     {
         result.error = "group contains duplicate assignments";
@@ -694,6 +727,18 @@ GroupResidual materialize_group_residual(const CNF &cnf,
 // Возвращает true, если группа корректна.
 bool check_group_validity(const vector<int>& group_masks, int k, string& diag)
 {
+    if (k < 0 || k > MAX_MASK_BITS || group_masks.size() > MAX_MASK_BITS)
+    {
+        diag = "group masks support at most 30 bits";
+        return false;
+    }
+    if (set<int>(group_masks.begin(), group_masks.end()).size() != group_masks.size() ||
+        any_of(group_masks.begin(), group_masks.end(),
+               [k](int mask) { return mask < 0 || mask >= (1 << k); }))
+    {
+        diag = "duplicate or out-of-range assignment mask";
+        return false;
+    }
     int gsz = (int)group_masks.size();
 
     if (gsz == 0)
@@ -799,6 +844,7 @@ bool check_group_validity(const vector<int>& group_masks, int k, string& diag)
 ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
                             bool construct_proof)
 {
+    validate_mask_input(*this, ids);
     partition_ind = 0;
 
     int k = ids.size();
@@ -1533,11 +1579,13 @@ void print_cnf(CNF &cnf)
     cout << endl;
 }
 
-unordered_map<string, long long> *used_nodes;
+static unordered_map<string, long long> used_node_storage;
+unordered_map<string, long long> *used_nodes = &used_node_storage;
 
 void preprocess(int maximum_clause_size)
 {
-    used_nodes = new unordered_map<string, long long>();
+    used_nodes->clear();
+    valid_3_partitions.clear();
     ID2VAR[0] = "?";
     VAR2ID["?"] = 0;
     ID2VAR[1] = "?+";
@@ -1546,9 +1594,9 @@ void preprocess(int maximum_clause_size)
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
 
-    POSSIBLE_LITERALS = {{1, 3, SINGLETON}, {3, 1, SINGLETON},
+    POSSIBLE_LITERALS = {{3, 1, SINGLETON},
                          {2, 2, ANY},       {3, 2, ANY},
-                         {2, 3, ANY},       {1, 4, SINGLETON},
+                         {2, 3, ANY},
                          {4, 1, SINGLETON}, {2, 1, ANY},
                          {2, 1, SINGLETON}};
 
@@ -1668,6 +1716,11 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                                     bool only_pos, bool silent,
                                     vector<long long> &out_children_ids)
 {
+    validate_degree(i, j, type);
+    if (!silent && out.is_open() && !cnf->clauses.empty())
+        throw invalid_argument("add declares the root family only; use addpos");
+    if (cnf->clauses.size() > MAX_MASK_BITS)
+        throw invalid_argument("exposure supports at most 30 parent clauses");
     // a + b = s
     // В 0 <= a <= i клозах литерал встречается с x
     // В 0 <= b <= j клозах он встречается с ~x
@@ -1675,8 +1728,11 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
 
     vector<CNF *> ans;
 
-    Literal *new_lit = new Literal(v_name);
-    Literal *new_lit_neg = new Literal(new_lit->id, !new_lit->inv);
+    Literal named(v_name);
+    if (analyze_formula(*cnf).count(named.id))
+        throw invalid_argument("exposure variable already occurs in parent");
+    Literal *new_lit = intern_literal(named.id, false);
+    Literal *new_lit_neg = intern_literal(named.id, true);
 
     int cnf_size = cnf->clauses.size();
 
@@ -1703,7 +1759,8 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                 {
                     int xm_ind = 0;
 
-                    CNF *now_cnf = new CNF(*cnf);
+                    unique_ptr<CNF, decltype(&destroy_cnf)> owner(new CNF(*cnf), destroy_cnf);
+                    CNF *now_cnf = owner.get();
 
                     bool var_skip = false;
 
@@ -1820,7 +1877,7 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
 
                     if (used_nodes->find(now_cnf_str) == used_nodes->end())
                     {
-                        ans.push_back(now_cnf);
+                        ans.push_back(owner.release());
                         (*used_nodes)[now_cnf_str] = now_cnf->node_id;
                         out_children_ids.push_back(now_cnf->node_id); // Сохраняем ID нового графа
                     }
@@ -1828,7 +1885,7 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                     {
                         // Граф изоморфен! Линкуем родителя со старым узлом, чтобы не рвать топологию
                         out_children_ids.push_back((*used_nodes)[now_cnf_str]);
-                        delete now_cnf; // Заодно чиним утечку памяти
+                        // owner frees the duplicate and all of its clauses.
                     }
 
                     // ans.push_back(now_cnf);
@@ -1848,7 +1905,7 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                 unique_children_ids.push_back(id);
             }
         }
-        global_logger.log_add_variable(cnf->node_id, cnf->get_cert_snapshot(), VAR2ID[v_name], i, j, unique_children_ids);
+        global_logger.log_add_variable(cnf->node_id, cnf->get_cert_snapshot(), VAR2ID[v_name], i, j, type, unique_children_ids);
     }
 
     return ans;
@@ -1873,6 +1930,19 @@ add_new_var_in_place(CNF *cnf, string v_name,
     if (pos < 0)
         return {cnf};
 
+    if (pos >= (int)cnf->clauses.size())
+        throw invalid_argument("exposure clause out of range");
+    Clause *selected = cnf->clauses[pos];
+    bool active = any_of(selected->lits.begin(), selected->lits.end(),
+                         [](Literal *lit) { return !is_any_unknown_literal(lit); });
+    if (!active || selected->tail_atoms.size() != 1 ||
+        (!selected->lits.count(&UNKNOWN_LITERAL) &&
+         !selected->lits.count(&UNKNOWN_NOT_EMPTY_LITERAL)))
+        throw invalid_argument("exposure requires an active literal and one tail");
+    if (variants.empty())
+        throw invalid_argument("exposure requires a nonempty degree specification");
+    for (auto degree : variants) validate_degree(degree.i, degree.j, degree.type);
+
     vector<CNF *> ans;
 
     vector<long long> all_children_ids;
@@ -1882,17 +1952,11 @@ add_new_var_in_place(CNF *cnf, string v_name,
         ans.insert(ans.end(), new_vars.begin(), new_vars.end());
     }
 
-    CNF *cnf_empty_space = new CNF(*cnf);
-
-    if (pos < cnf_empty_space->clauses.size() &&
-        cnf_empty_space->clauses[pos]->lits.find(&UNKNOWN_LITERAL) !=
-            cnf_empty_space->clauses[pos]->lits.end())
+    if (selected->lits.count(&UNKNOWN_LITERAL))
     {
+        CNF *cnf_empty_space = new CNF(*cnf);
         cnf_empty_space->clauses[pos]->lits.erase(&UNKNOWN_LITERAL);
         cnf_empty_space->clauses[pos]->tail_atoms.clear();
-    }
-
-    if (cnf_empty_space->clauses.size() != 0) {
         ans.push_back(cnf_empty_space);
         all_children_ids.push_back(cnf_empty_space->node_id);
     }
@@ -1905,7 +1969,7 @@ add_new_var_in_place(CNF *cnf, string v_name,
         }
     }
 
-    global_logger.log_addpos(cnf->node_id, cnf->get_cert_snapshot(), VAR2ID[v_name], pos, unique_children_ids);
+    global_logger.log_addpos(cnf->node_id, cnf->get_cert_snapshot(), VAR2ID[v_name], pos, variants, unique_children_ids);
 
     return ans;
 }
