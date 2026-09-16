@@ -1,6 +1,27 @@
 from itertools import permutations, product
 
 MAX_CLAUSES = 32767
+MAXIMUM_CLAUSE_SIZE_LIMIT = 2**31 - 2
+MAXIMUM_VARIABLE_OCCURRENCES_LIMIT = 2**31 - 2
+
+
+def validate_maximum_clause_size(maximum_clause_size):
+    if (type(maximum_clause_size) is not int or
+            (maximum_clause_size != -1 and
+             not 1 <= maximum_clause_size <= MAXIMUM_CLAUSE_SIZE_LIMIT)):
+        raise ValueError(
+            f"maximum clause size must be -1 or between 1 and "
+            f"{MAXIMUM_CLAUSE_SIZE_LIMIT}")
+
+
+def validate_maximum_variable_occurrences(maximum_variable_occurrences):
+    if (type(maximum_variable_occurrences) is not int or
+            (maximum_variable_occurrences != -1 and
+             not 1 <= maximum_variable_occurrences <=
+             MAXIMUM_VARIABLE_OCCURRENCES_LIMIT)):
+        raise ValueError(
+            f"maximum variable occurrences must be -1 or between 1 and "
+            f"{MAXIMUM_VARIABLE_OCCURRENCES_LIMIT}")
 
 
 def check_formula_size(formula):
@@ -44,6 +65,9 @@ def normalize_formula(value):
         parsed = [_literal(literal) for literal in clause]
         if len(set(parsed)) != len(parsed):
             raise ValueError("duplicate literal inside a clause")
+        ordinary = {literal for literal in parsed if type(literal) is int}
+        if any(-literal in ordinary for literal in ordinary):
+            raise ValueError("tautological clause is not normalized")
         clauses.append(tuple(sorted(parsed, key=_key)))
     return tuple(sorted(clauses, key=lambda clause: tuple(_key(x) for x in clause)))
 
@@ -60,6 +84,9 @@ def ordered_formula(value):
         parsed = [_literal(literal) for literal in clause]
         if len(set(parsed)) != len(parsed):
             raise ValueError("duplicate literal inside a clause")
+        ordinary = {literal for literal in parsed if type(literal) is int}
+        if any(-literal in ordinary for literal in ordinary):
+            raise ValueError("tautological clause is not normalized")
         result.append(tuple(sorted(parsed, key=_key)))
     return tuple(result)
 
@@ -80,6 +107,77 @@ def tail_ids(formula):
 def variables(formula):
     return sorted({abs(literal) for clause in formula for literal in clause
                    if type(literal) is int})
+
+
+def check_variable_occurrences(formula, maximum_variable_occurrences):
+    """Check explicit degrees and reject copied opaque tail contents."""
+    validate_maximum_variable_occurrences(maximum_variable_occurrences)
+    if maximum_variable_occurrences == -1:
+        return
+    formula = normalize_formula(formula) if isinstance(formula, list) else formula
+    occurrences = {}
+    seen_tails = set()
+    for clause in formula:
+        for literal in clause:
+            if is_tail(literal):
+                if literal[1] in seen_tails:
+                    raise ValueError(
+                        f"tail literal {literal[1]} is duplicated under the "
+                        "variable-occurrence limit")
+                seen_tails.add(literal[1])
+                continue
+            variable = abs(literal)
+            occurrences[variable] = occurrences.get(variable, 0) + 1
+            if occurrences[variable] > maximum_variable_occurrences:
+                raise ValueError(
+                    f"variable {variable} occurs {occurrences[variable]} times; "
+                    f"maximum is {maximum_variable_occurrences}")
+
+
+def derive_tail_bounds(formula, maximum_clause_size):
+    """Derive immutable tail bounds at the start of a local strategy."""
+    validate_maximum_clause_size(maximum_clause_size)
+    if maximum_clause_size == -1:
+        return {}
+    formula = normalize_formula(formula) if isinstance(formula, list) else formula
+    bounds = {}
+    for clause in formula:
+        known = {abs(literal) for literal in clause if type(literal) is int}
+        tails = [literal for literal in clause if is_tail(literal)]
+        if len(known) > maximum_clause_size:
+            raise ValueError("formula exceeds maximum clause size")
+        if len(tails) > 1:
+            raise ValueError(
+                "strategy root needs at most one tail per clause")
+        if not tails:
+            continue
+        bound = maximum_clause_size - len(known)
+        if bound == 0:
+            raise ValueError("strategy root contains an unclosed tail at width limit")
+        tail = tails[0]
+        if tail[2] == "nonempty" and bound < 1:
+            raise ValueError("nonempty tail has no available variable")
+        bounds[tail[1]] = min(bounds.get(tail[1], bound), bound)
+    return bounds
+
+
+def check_formula_width(formula, maximum_clause_size, tail_bounds):
+    """Check a strategy formula using bounds fixed at strategy entry."""
+    validate_maximum_clause_size(maximum_clause_size)
+    if maximum_clause_size == -1:
+        return
+    formula = normalize_formula(formula) if isinstance(formula, list) else formula
+    for clause in formula:
+        known = {abs(literal) for literal in clause if type(literal) is int}
+        clause_tails = {literal[1] for literal in clause if is_tail(literal)}
+        unknown = clause_tails - set(tail_bounds)
+        if unknown:
+            raise ValueError(f"formula introduces unknown tails {sorted(unknown)}")
+        upper_bound = len(known) + sum(tail_bounds[tail] for tail in clause_tails)
+        if upper_bound > maximum_clause_size:
+            raise ValueError(
+                f"clause width upper bound {upper_bound} exceeds "
+                f"maximum {maximum_clause_size}")
 
 
 def canonical_formula(formula):
