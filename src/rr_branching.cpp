@@ -68,7 +68,8 @@ pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool val_to_se
 //     return snap;
 // }
 
-ProofNode CNF::xiao_branch(int depth, std::string first_var)
+ProofNode CNF::xiao_branch(int depth, std::string first_var,
+                           const TailBounds *inherited_tail_bounds)
 {
     // The search considers every actual pivot.  In particular, if a good
     // (3,2)-variable exists, it must be selected as that pivot; its bound
@@ -80,9 +81,13 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     granted_node.tau = 100.0;
     granted_node.formula_snapshot = this->get_cert_snapshot();
 
+    TailBounds local_tail_bounds = inherited_tail_bounds
+                                       ? *inherited_tail_bounds
+                                       : derive_tail_bounds(*this);
+
     map<int, FormulaVarStats> stats = analyze_formula(*this);
 
-    ReductionStep reduction = apply_first_reduction(*this);
+    ReductionStep reduction = apply_first_reduction(*this, &local_tail_bounds);
     if (reduction.applied)
     {
         ProofNode child_node;
@@ -91,7 +96,8 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
             // RR7 and RR9 preserve the number of clauses but eliminate a
             // variable.  Continue on the transformed formula instead of
             // returning the meaningless branching vector (0).
-            child_node = reduction.cnf->xiao_branch(depth, first_var);
+            child_node = reduction.cnf->xiao_branch(depth, first_var,
+                                                    &local_tail_bounds);
         }
         else
         {
@@ -123,7 +129,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     // residuals produced by group branching.  Keeping this before the depth
     // cutoff is essential: a depth-1 branch must see the lemma in its child.
     DirectLemmaResult direct_lemma;
-    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+    if (named_assumptions_enabled())
         direct_lemma = find_best_direct_lemma23(*this);
     if (direct_lemma.applied && direct_lemma.tau < granted)
     {
@@ -139,7 +145,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     // For an (i,j)-literal a, the unit clauses must contain a itself
     // (the side with i occurrences), not its complement.  The resulting
     // branching vector is (i, 2j+1), where i >= j >= 2.
-    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+    if (named_assumptions_enabled())
     {
         for (auto const &[id, s] : stats)
         {
@@ -172,7 +178,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     // contains the minority literal of a (3,2)-variable.  Direct branching
     // removes the unit clause as well in the dominant branch and gives
     // (4,2), not (5,2).
-    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+    if (named_assumptions_enabled())
     {
         for (auto const &[id, s] : stats)
         {
@@ -222,13 +228,15 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
         };
         // Ветвь 1: x = 1
         auto [reduced_cnt1, new_cnf1] = apply_xiao_assignment(this, var_id, true);
-        ProofNode child1_res = new_cnf1->xiao_branch(depth - 1, "");
+        ProofNode child1_res = new_cnf1->xiao_branch(depth - 1, "",
+                                                     &local_tail_bounds);
         ProofNode stop1_res({0});
         stop1_res.formula_snapshot = new_cnf1->get_cert_snapshot();
 
         // Ветвь 2: x = 0
         auto [reduced_cnt0, new_cnf0] = apply_xiao_assignment(this, var_id, false);
-        ProofNode child0_res = new_cnf0->xiao_branch(depth - 1, "");
+        ProofNode child0_res = new_cnf0->xiao_branch(depth - 1, "",
+                                                     &local_tail_bounds);
         ProofNode stop0_res({0});
         stop0_res.formula_snapshot = new_cnf0->get_cert_snapshot();
 

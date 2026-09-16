@@ -1,13 +1,43 @@
 from itertools import product
 
-from .formula import (is_tail, normalize_formula, ordered_formula,
-                      replace_tail, tail_ids, variables, canonical_formula)
+from .formula import (canonical_formula, is_tail, normalize_formula,
+                      ordered_formula, replace_tail, tail_ids,
+                      validate_maximum_clause_size, variables)
 
 
 POSSIBLE_DEGREES = (
     (3, 1, True), (2, 2, False), (3, 2, False), (2, 3, False), (4, 1, True),
 )
 LEGACY_DEGREES = ((1, 3, True), (1, 4, True)) + POSSIBLE_DEGREES
+
+
+def _limit_clause(clause, maximum_clause_size):
+    if maximum_clause_size == -1:
+        return tuple(clause)
+    tails = [literal for literal in clause if is_tail(literal)]
+    if len(tails) > 1:
+        raise ValueError("a bounded structural clause must have at most one tail")
+    known = {abs(literal) for literal in clause if type(literal) is int}
+    if len(known) > maximum_clause_size:
+        return None
+    if tails and len(known) == maximum_clause_size:
+        if tails[0][2] == "nonempty":
+            return None
+        return tuple(literal for literal in clause if not is_tail(literal))
+    return tuple(clause)
+
+
+def enforce_maximum_clause_size(formula, maximum_clause_size):
+    """Return width-normalized formula, or None for an impossible case."""
+    validate_maximum_clause_size(maximum_clause_size)
+    formula = normalize_formula(formula) if isinstance(formula, list) else formula
+    limited = []
+    for clause in formula:
+        child = _limit_clause(clause, maximum_clause_size)
+        if child is None:
+            return None
+        limited.append(list(child))
+    return normalize_formula(limited)
 
 
 def validate_degree(positive, negative, singleton, legacy=False):
@@ -57,7 +87,9 @@ def _build_formula(formula, roles, variable, positive, negative, singleton):
 
 
 def generate_exposure(formula, variable, positive, negative, singleton,
-                      required_clause=None, legacy=False):
+                      required_clause=None, legacy=False,
+                      maximum_clause_size=-1):
+    validate_maximum_clause_size(maximum_clause_size)
     validate_degree(positive, negative, singleton, legacy)
     validate_exposure_formula(formula, variable)
     wildcard_indices = [index for index, clause in enumerate(formula)
@@ -75,21 +107,37 @@ def generate_exposure(formula, variable, positive, negative, singleton,
             continue
         if singleton and placed_negative:
             continue
-        generated.add(_build_formula(formula, roles, variable,
-                                     positive, negative, singleton))
+        child = enforce_maximum_clause_size(
+            _build_formula(formula, roles, variable,
+                           positive, negative, singleton),
+            maximum_clause_size)
+        if child is not None:
+            generated.add(child)
     return generated
 
 
-def expected_children(node, legacy=False):
+def expected_children(node, legacy=False, maximum_clause_size=-1):
+    validate_maximum_clause_size(maximum_clause_size)
     # Clause indices in refine records refer to the producer's original
     # sequence, so validate here but do not sort before applying the split.
     normalize_formula(node["formula"])
     formula = ordered_formula(node["formula"])
+    if maximum_clause_size != -1:
+        for clause in formula:
+            limited = _limit_clause(clause, maximum_clause_size)
+            if limited is None or limited != clause:
+                raise ValueError("parent formula is not width-normalized")
     rule = node["rule"]
     if rule == "tail_empty_or_nonempty":
         clause = node["clause"]
-        return {replace_tail(formula, clause, None),
-                replace_tail(formula, clause, "nonempty")}
+        result = set()
+        for replacement in (None, "nonempty"):
+            child = enforce_maximum_clause_size(
+                replace_tail(formula, clause, replacement),
+                maximum_clause_size)
+            if child is not None:
+                result.add(child)
+        return result
     if rule == "expose_variable":
         raise ValueError("unconditional exposure is only a root family declaration")
     if rule == "expose_at_clause":
@@ -100,20 +148,25 @@ def expected_children(node, legacy=False):
         tails = [lit for lit in selected if is_tail(lit)]
         if len(tails) != 1 or not any(type(lit) is int for lit in selected):
             raise ValueError("exposure requires one tail and an active literal")
-        result = ({replace_tail(formula, index, None)}
-                  if tails[0][2] == "any" else set())
+        result = set()
+        if tails[0][2] == "any":
+            empty_child = enforce_maximum_clause_size(
+                replace_tail(formula, index, None), maximum_clause_size)
+            if empty_child is not None:
+                result.add(empty_child)
         degrees = node.get("degrees", LEGACY_DEGREES if legacy else POSSIBLE_DEGREES)
         if not isinstance(degrees, (list, tuple)) or not degrees:
             raise ValueError("exposure needs a nonempty degree specification")
         for positive, negative, singleton in degrees:
             result.update(generate_exposure(formula, node["variable"],
                                             positive, negative, singleton,
-                                            index, legacy=legacy))
+                                            index, legacy=legacy,
+                                            maximum_clause_size=maximum_clause_size))
         return result
     raise ValueError(f"unknown refine rule {rule!r}")
 
 
-def declared_root(node, legacy=False):
+def declared_root(node, legacy=False, maximum_clause_size=-1):
     """Decode the producer's initial family declaration, not a refinement."""
     fields = {"kind", "formula", "variable", "positive", "negative", "singleton", "children"}
     if legacy:
@@ -124,7 +177,8 @@ def declared_root(node, legacy=False):
     if node.get("formula") != [] or len(node.get("children", [])) != 1:
         raise ValueError("root declaration needs an empty seed and exactly one child")
     expected = generate_exposure((), node["variable"], node["positive"],
-                                 node["negative"], node["singleton"], legacy=legacy)
+                                 node["negative"], node["singleton"], legacy=legacy,
+                                 maximum_clause_size=maximum_clause_size)
     child = node["children"][0]
     if {canonical_formula(f) for f in expected} != {canonical_formula(child["formula"])}:
         raise ValueError("root family differs from its declared degrees")

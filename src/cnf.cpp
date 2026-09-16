@@ -20,6 +20,12 @@ using namespace std;
 
 MaxSATSettingsType MaxSATSettings{-1, true};
 
+bool named_assumptions_enabled()
+{
+    return MaxSATSettings.MAXIMUM_CLAUSE_SIZE == -1 &&
+           MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
+}
+
 map<int, string> ID2VAR;
 map<string, int> VAR2ID;
 int ID_COUNTER = 2;
@@ -271,8 +277,9 @@ ProofNode CNF::branch(vector<int> ids)
 
             if (count_set_bits(clauses_mask[other_mask]) >= max_val)
             {
-                if ((*this).clauses.size() - no_clauses_mask[other_mask] <=
-                        clauses_mask[mask] &&
+                if ((*this).clauses.size() -
+                            count_set_bits(no_clauses_mask[other_mask]) <=
+                        count_set_bits(clauses_mask[mask]) &&
                     other_mask > mask)
                 {
                     continue;
@@ -438,6 +445,108 @@ bool get_next_3_partition_fast(std::vector<int> &c,
 bool is_any_unknown_literal(const Literal *l)
 {
     return l == &UNKNOWN_LITERAL || l == &UNKNOWN_NOT_EMPTY_LITERAL;
+}
+
+bool enforce_maximum_clause_size(CNF &cnf)
+{
+    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE == -1)
+        return true;
+
+    const size_t maximum_clause_size =
+        static_cast<size_t>(MaxSATSettings.MAXIMUM_CLAUSE_SIZE);
+    for (Clause *clause : cnf.clauses)
+    {
+        set<int> variable_ids;
+        Literal *tail = nullptr;
+        for (Literal *literal : clause->lits)
+        {
+            if (is_any_unknown_literal(literal))
+            {
+                if (tail)
+                    throw invalid_argument("a bounded structural clause must have at most one tail");
+                tail = literal;
+            }
+            else
+            {
+                variable_ids.insert(literal->id);
+            }
+        }
+
+        if ((tail == nullptr) != clause->tail_atoms.empty() ||
+            clause->tail_atoms.size() > 1)
+            throw invalid_argument("clause tail marker and tail atoms are inconsistent");
+
+        if (variable_ids.size() > maximum_clause_size)
+            return false;
+        if (tail && variable_ids.size() == maximum_clause_size)
+        {
+            if (tail == &UNKNOWN_NOT_EMPTY_LITERAL)
+                return false;
+            clause->lits.erase(&UNKNOWN_LITERAL);
+            clause->tail_atoms.clear();
+        }
+    }
+    return true;
+}
+
+TailBounds derive_tail_bounds(const CNF &cnf)
+{
+    TailBounds bounds;
+    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE == -1)
+        return bounds;
+
+    const int maximum_clause_size = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
+    for (Clause *clause : cnf.clauses)
+    {
+        set<int> known_ids;
+        for (Literal *literal : clause->lits)
+            if (!is_any_unknown_literal(literal))
+                known_ids.insert(literal->id);
+
+        int available = maximum_clause_size - (int)known_ids.size();
+        if (available < 0)
+            continue;
+        for (auto const &[tail_id, nonempty] : clause->tail_atoms)
+        {
+            (void)nonempty;
+            auto it = bounds.find(tail_id);
+            if (it == bounds.end())
+                bounds[tail_id] = available;
+            else
+                it->second = min(it->second, available);
+        }
+    }
+    return bounds;
+}
+
+bool respects_maximum_clause_size(const CNF &cnf,
+                                  const TailBounds &tail_bounds)
+{
+    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE == -1)
+        return true;
+
+    const int maximum_clause_size = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
+    for (Clause *clause : cnf.clauses)
+    {
+        set<int> known_ids;
+        for (Literal *literal : clause->lits)
+            if (!is_any_unknown_literal(literal))
+                known_ids.insert(literal->id);
+
+        long long upper_bound = known_ids.size();
+        for (auto const &[tail_id, nonempty] : clause->tail_atoms)
+        {
+            auto it = tail_bounds.find(tail_id);
+            if (it == tail_bounds.end())
+                return false;
+            if (nonempty && it->second < 1)
+                return false;
+            upper_bound += it->second;
+        }
+        if (upper_bound > maximum_clause_size)
+            return false;
+    }
+    return true;
 }
 
 map<int, FormulaVarStats> analyze_formula(const CNF &cnf)
@@ -714,6 +823,14 @@ GroupResidual materialize_group_residual(const CNF &cnf,
             new Clause(transformed, cnf.clauses[clause_idx]->tail_atoms));
     }
 
+    if (!enforce_maximum_clause_size(*result.cnf))
+    {
+        result.error = "group residual exceeds maximum clause size";
+        destroy_cnf(result.cnf);
+        result.cnf = nullptr;
+        return result;
+    }
+
     result.valid = true;
     return result;
 }
@@ -845,6 +962,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
                             bool construct_proof)
 {
     validate_mask_input(*this, ids);
+    TailBounds strategy_tail_bounds = derive_tail_bounds(*this);
     partition_ind = 0;
 
     int k = ids.size();
@@ -1100,7 +1218,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
                 // Применение лемм на основе precomputed repr_stats
                 // -------------------------------------------------------
 
-                if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+                if (named_assumptions_enabled())
                 {
                     for (const DirectLemmaResult &direct_lemma :
                          find_direct_lemma23_candidates(*group_residual.cnf))
@@ -1117,7 +1235,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
                     }
                 }
 
-                if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+                if (named_assumptions_enabled())
                 {
                     for (auto const &[id, st] : repr_stats)
                     {
@@ -1183,7 +1301,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
             else
             {
                 ReductionFixpoint reduced_residual =
-                    reduce_to_fixpoint(*group_residual.cnf);
+                    reduce_to_fixpoint(*group_residual.cnf,
+                                       &strategy_tail_bounds);
                 unique_ptr<CNF, void (*)(CNF *)> reduced_residual_guard(
                     reduced_residual.cnf, destroy_cnf);
 
@@ -1200,7 +1319,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
                 else
                 {
                     ProofNode fast_residual =
-                        reduced_residual.cnf->xiao_branch(1, "");
+                        reduced_residual.cnf->xiao_branch(
+                            1, "", &strategy_tail_bounds);
                     residual_summary.vec = fast_residual.vec;
                     residual_summary.factor = fast_residual.tau;
                     residual_summary.rule = "residual_xiao";
@@ -1379,7 +1499,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
             bool valid_chain = true;
             for (const string &rule : witness.residual_reduction_rules)
             {
-                ReductionStep step = apply_named_reduction(*current, rule);
+                ReductionStep step = apply_named_reduction(
+                    *current, rule, &strategy_tail_bounds);
                 if (!step.applied || !step.cnf)
                 {
                     valid_chain = false;
@@ -1416,7 +1537,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
         }
         else if (witness.rule == "residual_xiao")
         {
-            child = residual.cnf->xiao_branch(1, "");
+            child = residual.cnf->xiao_branch(1, "",
+                                              &strategy_tail_bounds);
         }
         else
         {
@@ -1584,6 +1706,17 @@ unordered_map<string, long long> *used_nodes = &used_node_storage;
 
 void preprocess(int maximum_clause_size)
 {
+    if (maximum_clause_size != -1 && maximum_clause_size < 1)
+        throw invalid_argument("maximum clause size must be -1 or at least 1");
+    if (maximum_clause_size == numeric_limits<int>::max())
+        throw invalid_argument("maximum clause size is too large");
+
+    static bool generation_session_started = false;
+    if (generation_session_started &&
+        maximum_clause_size != MaxSATSettings.MAXIMUM_CLAUSE_SIZE)
+        throw logic_error("maximum clause size cannot change during a generation session");
+    generation_session_started = true;
+
     used_nodes->clear();
     valid_3_partitions.clear();
     ID2VAR[0] = "?";
@@ -1592,7 +1725,7 @@ void preprocess(int maximum_clause_size)
     VAR2ID["?+"] = 1;
 
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
-    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = maximum_clause_size == -1;
 
     POSSIBLE_LITERALS = {{3, 1, SINGLETON},
                          {2, 2, ANY},       {3, 2, ANY},
@@ -1845,33 +1978,8 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                         }
                     }
 
-                    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE != -1)
-                    {
-                        bool too_many_lits = false;
-
-                        for (Clause *c : now_cnf->clauses)
-                        {
-                            if (c->lits.size() > MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 ||
-                                (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 &&
-                                 c->lits.find(&UNKNOWN_LITERAL) == c->lits.end()))
-                            {
-                                too_many_lits = true;
-                                break;
-                            }
-                        }
-
-                        if (too_many_lits)
-                            continue;
-
-                        for (Clause *c : now_cnf->clauses)
-                        {
-                            if (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1)
-                            {
-                                c->lits.erase(&UNKNOWN_LITERAL);
-                                c->tail_atoms.clear();
-                            }
-                        }
-                    }
+                    if (!enforce_maximum_clause_size(*now_cnf))
+                        continue;
 
                     string now_cnf_str = cnf_to_max_string(now_cnf);
 
@@ -1957,8 +2065,19 @@ add_new_var_in_place(CNF *cnf, string v_name,
         CNF *cnf_empty_space = new CNF(*cnf);
         cnf_empty_space->clauses[pos]->lits.erase(&UNKNOWN_LITERAL);
         cnf_empty_space->clauses[pos]->tail_atoms.clear();
-        ans.push_back(cnf_empty_space);
-        all_children_ids.push_back(cnf_empty_space->node_id);
+        string child_key = cnf_to_max_string(cnf_empty_space);
+        auto existing = used_nodes->find(child_key);
+        if (existing == used_nodes->end())
+        {
+            ans.push_back(cnf_empty_space);
+            (*used_nodes)[child_key] = cnf_empty_space->node_id;
+            all_children_ids.push_back(cnf_empty_space->node_id);
+        }
+        else
+        {
+            all_children_ids.push_back(existing->second);
+            destroy_cnf(cnf_empty_space);
+        }
     }
 
     vector<long long> unique_children_ids;
@@ -1977,6 +2096,9 @@ add_new_var_in_place(CNF *cnf, string v_name,
 // Функция возвращает пару {CNF_с_пустотой, CNF_с_непустотой(?+)}
 DivideResult empty_divide(CNF *cnf)
 {
+    if (!enforce_maximum_clause_size(*cnf))
+        throw invalid_argument("formula exceeds maximum clause size");
+
     DivideResult best_split;
     double min_worst_factor = std::numeric_limits<double>::infinity();
 

@@ -73,6 +73,8 @@ void CertLogger::log_add_variable(
     std::ostringstream ss;
     ss << "{\"node_id\":" << parent_id
        << ",\"kind\":\"root_family\""
+       << ",\"maximum_clause_size\":"
+       << MaxSATSettings.MAXIMUM_CLAUSE_SIZE
        << ",\"formula\":" << formula_to_json(snapshot)
        << ",\"variable\":" << var_id
        << ",\"positive\":" << pos_deg
@@ -136,7 +138,7 @@ std::string CertLogger::proof_node_to_json(const ProofNode &node)
 
     if (node.type == "leaf" && !node.rule.empty())
     {
-        if (!MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+        if (!named_assumptions_enabled())
             throw std::logic_error(
                 "strict proof mode reached a named assumption: " + node.rule);
         ss << "{\"kind\":\"assumption\",\"formula\":" << formula

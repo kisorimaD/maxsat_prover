@@ -38,8 +38,20 @@ void append_merged_clause(CNF *target,
                           const vector<Clause *> &sources = {})
 {
     vector<Literal *> merged;
+    map<int, int> polarities;
     for (const auto &part : parts)
-        merged.insert(merged.end(), part.begin(), part.end());
+        for (Literal *literal : part)
+        {
+            merged.push_back(literal);
+            if (!is_any_unknown_literal(literal))
+                polarities[literal->id] |= literal->inv ? 2 : 1;
+        }
+    for (auto const &[id, mask] : polarities)
+    {
+        (void)id;
+        if (mask == 3)
+            return;
+    }
     map<int, bool> tails;
     for (Clause *source : sources)
         for (auto const &[id, nonempty] : source->tail_atoms)
@@ -186,7 +198,8 @@ ReductionStep apply_rr3(const CNF &cnf,
 }
 
 ReductionStep apply_rr2(const CNF &cnf,
-                        const map<int, FormulaVarStats> &stats)
+                        const map<int, FormulaVarStats> &stats,
+                        const TailBounds &tail_bounds)
 {
     for (auto const &[id, st] : stats)
     {
@@ -204,6 +217,11 @@ ReductionStep apply_rr2(const CNF &cnf,
                              {cnf.clauses[pos_idx], cnf.clauses[neg_idx]});
         int decrease = (int)cnf.clauses.size() - (int)reduced->clauses.size();
         if (decrease < 1)
+        {
+            destroy_cnf(reduced);
+            continue;
+        }
+        if (!respects_maximum_clause_size(*reduced, tail_bounds))
         {
             destroy_cnf(reduced);
             continue;
@@ -248,7 +266,8 @@ ReductionStep apply_rr4(const CNF &cnf,
 }
 
 ReductionStep apply_rr5(const CNF &cnf,
-                        const map<int, FormulaVarStats> &stats)
+                        const map<int, FormulaVarStats> &stats,
+                        const TailBounds &tail_bounds)
 {
     for (auto const &[id, st] : stats)
     {
@@ -299,7 +318,12 @@ ReductionStep apply_rr5(const CNF &cnf,
                                      {cnf.clauses[xC_idx], cnf.clauses[nxD_idx]});
                 int decrease = (int)cnf.clauses.size() -
                                (int)reduced->clauses.size();
-                if (decrease != 1)
+                if (decrease < 1)
+                {
+                    destroy_cnf(reduced);
+                    continue;
+                }
+                if (!respects_maximum_clause_size(*reduced, tail_bounds))
                 {
                     destroy_cnf(reduced);
                     continue;
@@ -313,7 +337,8 @@ ReductionStep apply_rr5(const CNF &cnf,
 }
 
 ReductionStep apply_rr6(const CNF &cnf,
-                        const map<int, FormulaVarStats> &stats)
+                        const map<int, FormulaVarStats> &stats,
+                        const TailBounds &tail_bounds)
 {
     for (auto const &[id, st] : stats)
     {
@@ -368,6 +393,11 @@ ReductionStep apply_rr6(const CNF &cnf,
                     destroy_cnf(reduced);
                     continue;
                 }
+                if (!respects_maximum_clause_size(*reduced, tail_bounds))
+                {
+                    destroy_cnf(reduced);
+                    continue;
+                }
                 return {true, "RR6", id, decrease,
                         {unique_idx}, reduced};
             }
@@ -408,6 +438,7 @@ ReductionStep apply_rr7(const CNF &cnf,
                     for (Clause *clause : cnf.clauses)
                     {
                         vector<Literal *> transformed;
+                        map<int, int> polarities;
                         for (Literal *lit : clause->lits)
                         {
                             if (lit->id != y_id)
@@ -419,10 +450,23 @@ ReductionStep apply_rr7(const CNF &cnf,
                                 transformed.push_back(
                                     intern_literal(x.id, x.inv));
                         }
+                        for (Literal *lit : transformed)
+                            if (!is_any_unknown_literal(lit))
+                                polarities[lit->id] |= lit->inv ? 2 : 1;
+                        bool tautology = false;
+                        for (auto const &[id, mask] : polarities)
+                        {
+                            (void)id;
+                            tautology |= mask == 3;
+                        }
+                        if (tautology)
+                            continue;
                         reduced->clauses.push_back(new Clause(transformed,
                                                                clause->tail_atoms));
                     }
-                    return {true, "RR7", y_id, 0, witnesses, reduced};
+                    int decrease = (int)cnf.clauses.size() -
+                                   (int)reduced->clauses.size();
+                    return {true, "RR7", y_id, decrease, witnesses, reduced};
                 }
             }
         }
@@ -471,7 +515,8 @@ bool is_singleton_with_unit_complement(const FormulaVarStats &st, LitKey y)
 }
 
 ReductionStep apply_rr9(const CNF &cnf,
-                        const map<int, FormulaVarStats> &stats)
+                        const map<int, FormulaVarStats> &stats,
+                        const TailBounds &tail_bounds)
 {
     for (auto const &[x_id, st] : stats)
     {
@@ -507,7 +552,14 @@ ReductionStep apply_rr9(const CNF &cnf,
                             {clause_tail(cnf.clauses[left_idx], x_id),
                              clause_tail(cnf.clauses[right_idx], x_id)},
                             {cnf.clauses[left_idx], cnf.clauses[right_idx]});
-                return {true, "RR9", x_id, 0,
+                if (!respects_maximum_clause_size(*reduced, tail_bounds))
+                {
+                    destroy_cnf(reduced);
+                    continue;
+                }
+                int decrease = (int)cnf.clauses.size() -
+                               (int)reduced->clauses.size();
+                return {true, "RR9", x_id, decrease,
                         {left[0], left[1], right[0], right[1]}, reduced};
             }
         }
@@ -516,41 +568,59 @@ ReductionStep apply_rr9(const CNF &cnf,
 }
 } // namespace
 
-ReductionStep apply_named_reduction(const CNF &cnf, const string &rule)
+ReductionStep apply_named_reduction(const CNF &cnf, const string &rule,
+                                    const TailBounds *inherited_tail_bounds)
 {
+    TailBounds local_tail_bounds = inherited_tail_bounds
+                                       ? *inherited_tail_bounds
+                                       : derive_tail_bounds(cnf);
     map<int, FormulaVarStats> stats = analyze_formula(cnf);
-    if (rule == "RR1") return apply_rr1(cnf);
-    if (rule == "RR2") return apply_rr2(cnf, stats);
-    if (rule == "RR3") return apply_rr3(cnf, stats);
-    if (rule == "RR4") return apply_rr4(cnf, stats);
-    if (rule == "RR5") return apply_rr5(cnf, stats);
-    if (rule == "RR6") return apply_rr6(cnf, stats);
-    if (rule == "RR7") return apply_rr7(cnf, stats);
-    if (rule == "RR8") return apply_rr8(cnf, stats);
-    if (rule == "RR9") return apply_rr9(cnf, stats);
-    return {};
+    ReductionStep step;
+    if (rule == "RR1") step = apply_rr1(cnf);
+    else if (rule == "RR2") step = apply_rr2(cnf, stats, local_tail_bounds);
+    else if (rule == "RR3") step = apply_rr3(cnf, stats);
+    else if (rule == "RR4") step = apply_rr4(cnf, stats);
+    else if (rule == "RR5") step = apply_rr5(cnf, stats, local_tail_bounds);
+    else if (rule == "RR6") step = apply_rr6(cnf, stats, local_tail_bounds);
+    else if (rule == "RR7") step = apply_rr7(cnf, stats);
+    else if (rule == "RR8") step = apply_rr8(cnf, stats);
+    else if (rule == "RR9") step = apply_rr9(cnf, stats, local_tail_bounds);
+
+    if (step.applied && step.cnf &&
+        !respects_maximum_clause_size(*step.cnf, local_tail_bounds))
+    {
+        destroy_cnf(step.cnf);
+        return {};
+    }
+    return step;
 }
 
-ReductionStep apply_first_reduction(const CNF &cnf)
+ReductionStep apply_first_reduction(const CNF &cnf,
+                                    const TailBounds *tail_bounds)
 {
     for (int number = 1; number <= 9; ++number)
     {
         ReductionStep step = apply_named_reduction(
-            cnf, "RR" + to_string(number));
+            cnf, "RR" + to_string(number), tail_bounds);
         if (step.applied)
             return step;
     }
     return {};
 }
 
-ReductionFixpoint reduce_to_fixpoint(const CNF &cnf)
+ReductionFixpoint reduce_to_fixpoint(const CNF &cnf,
+                                     const TailBounds *inherited_tail_bounds)
 {
+    TailBounds local_tail_bounds = inherited_tail_bounds
+                                       ? *inherited_tail_bounds
+                                       : derive_tail_bounds(cnf);
     ReductionFixpoint result;
     result.cnf = clone_cnf(cnf);
 
     while (true)
     {
-        ReductionStep step = apply_first_reduction(*result.cnf);
+        ReductionStep step = apply_first_reduction(*result.cnf,
+                                                   &local_tail_bounds);
         if (!step.applied)
             break;
 
@@ -611,7 +681,15 @@ vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf)
              (st.neg_count == 2 && st.pos_count == 1)))
         {
             int D = st.neg_count == 1 ? st.neg_min_D : st.pos_min_D;
-            if (D != 999999)
+            // Lemma 3 has a resolution child C_i v D.  This can widen a
+            // bounded clause unless D is empty.  Lemma 2 uses assignments
+            // only and therefore remains available for the same variable.
+            bool exact_unit_minority =
+                st.neg_count == 1 ? st.neg_unit_count > 0
+                                  : st.pos_unit_count > 0;
+            if (D != 999999 &&
+                (MaxSATSettings.MAXIMUM_CLAUSE_SIZE == -1 ||
+                 exact_unit_minority))
                 add("lemma3", id, -1, D, st.pos_count, st.neg_count,
                     {1, max(8, 7 + 2 * D)});
         }

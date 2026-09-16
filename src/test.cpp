@@ -47,12 +47,57 @@ void test_safety()
     rejected([] { validate_degree(1, 4, SINGLETON); });
     validate_degree(3, 1, SINGLETON);
 
+    unique_ptr<CNF, decltype(&destroy_cnf)> symmetric_units(new CNF(), destroy_cnf);
+    for (int i = 0; i < 3; ++i)
+    {
+        symmetric_units->clauses.push_back(new Clause(vector<Literal*>{
+            intern_literal(safety_x.id, false)}));
+        symmetric_units->clauses.push_back(new Clause(vector<Literal*>{
+            intern_literal(safety_x.id, true)}));
+    }
+    ProofNode symmetric_branch = symmetric_units->branch({safety_x.id});
+    assert(symmetric_branch.alternatives.size() == 1);
+    assert(symmetric_branch.alternatives[0].offset == 3);
+    assert(symmetric_branch.alternatives[0].decrease == 6);
+
+    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE >= 1 &&
+        MaxSATSettings.MAXIMUM_CLAUSE_SIZE <= 3)
+    {
+        const int width = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
+        vector<Literal*> boundary_literals;
+        for (int i = 0; i < width; ++i)
+            boundary_literals.push_back(intern_literal(20 + i, false));
+
+        unique_ptr<CNF, decltype(&destroy_cnf)> at_boundary(new CNF(), destroy_cnf);
+        vector<Literal*> optional_tail = boundary_literals;
+        optional_tail.push_back(&UNKNOWN_LITERAL);
+        at_boundary->clauses.push_back(new Clause(optional_tail));
+        assert(enforce_maximum_clause_size(*at_boundary));
+        assert(!at_boundary->clauses[0]->lits.count(&UNKNOWN_LITERAL));
+        assert(at_boundary->clauses[0]->tail_atoms.empty());
+
+        unique_ptr<CNF, decltype(&destroy_cnf)> required_tail(new CNF(), destroy_cnf);
+        vector<Literal*> nonempty_tail = boundary_literals;
+        nonempty_tail.push_back(&UNKNOWN_NOT_EMPTY_LITERAL);
+        required_tail->clauses.push_back(new Clause(nonempty_tail));
+        assert(!enforce_maximum_clause_size(*required_tail));
+
+        unique_ptr<CNF, decltype(&destroy_cnf)> oversized(new CNF(), destroy_cnf);
+        vector<Literal*> wide_literals = boundary_literals;
+        wide_literals.push_back(intern_literal(20 + width, false));
+        oversized->clauses.push_back(new Clause(wide_literals));
+        assert(!enforce_maximum_clause_size(*oversized));
+    }
+
     unique_ptr<CNF, decltype(&destroy_cnf)> parent(new CNF(), destroy_cnf);
     parent->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false),
                                                          &UNKNOWN_NOT_EMPTY_LITERAL}));
     auto children = add_new_var_in_place(parent.get(), "safety_y", [](CNF*) { return 0; },
                                          {{3, 1, SINGLETON}});
-    assert(!children.empty());
+    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE == 1)
+        assert(children.empty());
+    else
+        assert(!children.empty());
     for (CNF *child : children)
     {
         assert(analyze_formula(*child).count(VAR2ID.at("safety_y")));
@@ -146,6 +191,142 @@ static void check_constructive_reduction(const vector<vector<int>> &input,
 
 void test_constructive_reductions()
 {
+    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE != -1)
+    {
+        assert(!named_assumptions_enabled());
+        MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
+        assert(!named_assumptions_enabled());
+        MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+
+        if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE >= 3)
+        {
+            check_constructive_reduction({{2, 3}, {-2, 4}},
+                                         "RR2", 1, {{3, 4}}, true);
+            check_constructive_reduction({{2, 3}, {2, 4}, {-2, 5}},
+                                         "RR5", 1,
+                                         {{3, 5}, {-3, 4, 5}}, true);
+            check_constructive_reduction({{2, 4}, {2, 5}, {-2, 3}, {-3}},
+                                         "RR6", 1,
+                                         {{3, 4}, {3, 5}, {-3}}, true);
+            check_constructive_reduction(
+                {{2, 4}, {2, 5}, {-2, 3, 6}, {-2, 3, 7}, {-3}},
+                "RR9", 0,
+                {{3, 4, 6}, {3, 4, 7},
+                 {3, 5, 6}, {3, 5, 7}, {-3}}, true);
+            check_constructive_reduction(
+                {{2, 4}, {-2, 4}, {-2, 3, -4}, {3, -4}, {-3}},
+                "RR9", 1,
+                {{2, 3}, {-2, 3}, {-2, 3}, {-3}}, true);
+
+            // The first RR2 occurrence is too wide, but a later occurrence
+            // is safe and must still be considered.
+            CNF *mixed_rr2 = create_dummy_cnf(
+                {{2, 3, 4}, {-2, 5, 6}, {7, 8}, {-7, 9}});
+            ReductionStep later_rr2 = apply_named_reduction(*mixed_rr2, "RR2");
+            assert(later_rr2.applied);
+            assert(later_rr2.pivot_id == 7);
+            destroy_cnf(later_rr2.cnf);
+            delete_dummy_cnf(mixed_rr2);
+
+            CNF *mixed_rr5 = create_dummy_cnf(
+                {{2, 3}, {2, 4}, {-2, 5, 6},
+                 {10, 11}, {10, 12}, {-10, 13}});
+            ReductionStep later_rr5 = apply_named_reduction(*mixed_rr5, "RR5");
+            assert(later_rr5.applied);
+            assert(later_rr5.pivot_id == 10);
+            destroy_cnf(later_rr5.cnf);
+            delete_dummy_cnf(mixed_rr5);
+
+            CNF *mixed_rr6 = create_dummy_cnf(
+                {{2, 4, 5}, {2, 6}, {-2, 3, 7}, {-3},
+                 {10, 12}, {10, 13}, {-10, 11}, {-11}});
+            ReductionStep later_rr6 = apply_named_reduction(*mixed_rr6, "RR6");
+            assert(later_rr6.applied);
+            assert(later_rr6.pivot_id == 10);
+            destroy_cnf(later_rr6.cnf);
+            delete_dummy_cnf(mixed_rr6);
+
+            CNF *mixed_rr9 = create_dummy_cnf(
+                {{2, 4, 5}, {2, 6}, {-2, 3, 7}, {-2, 3, 8}, {-3},
+                 {10, 14}, {10, 15},
+                 {-10, 11, 16}, {-10, 11, 17}, {-11}});
+            ReductionStep later_rr9 = apply_named_reduction(*mixed_rr9, "RR9");
+            assert(later_rr9.applied);
+            assert(later_rr9.pivot_id == 10);
+            destroy_cnf(later_rr9.cnf);
+            delete_dummy_cnf(mixed_rr9);
+
+            // Bounds of distinct source tails are summed in the resolvent.
+            CNF *two_tail_rr2 = create_dummy_cnf({{2, 3, 0}, {-2, 3, 0}});
+            TailBounds tail_bounds = derive_tail_bounds(*two_tail_rr2);
+            ReductionStep merged_tails = apply_named_reduction(
+                *two_tail_rr2, "RR2", &tail_bounds);
+            assert(merged_tails.applied);
+            assert(merged_tails.cnf->clauses.size() == 1);
+            assert(merged_tails.cnf->clauses[0]->tail_atoms.size() == 2);
+            assert(respects_maximum_clause_size(*merged_tails.cnf,
+                                                tail_bounds));
+            destroy_cnf(merged_tails.cnf);
+            delete_dummy_cnf(two_tail_rr2);
+        }
+
+        if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE == 2)
+        {
+            check_constructive_reduction({{2}, {-2}},
+                                         "RR2", 1, {{}}, true);
+            check_constructive_reduction({{2, 3}, {2}, {-2}},
+                                         "RR5", 1, {{3}, {-3}}, true);
+            check_constructive_reduction({{2, 4}, {2, 5}, {-2, 3}, {-3}},
+                                         "RR6", 1,
+                                         {{3, 4}, {3, 5}, {-3}}, true);
+            check_constructive_reduction(
+                {{2, 4}, {2, 5}, {-2, 3}, {-2, 3}, {-3}},
+                "RR9", 0,
+                {{3, 4}, {3, 4}, {3, 5}, {3, 5}, {-3}}, true);
+        }
+
+        if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE >= 2)
+        {
+            check_constructive_reduction({{2, -2, 3}, {4, 0}},
+                                         "RR1", 1, {{4, 0}}, true);
+            check_constructive_reduction({{2}, {2, 0}, {-2, 1}},
+                                         "RR3", 2, {{1}});
+        }
+        if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE >= 3)
+        {
+            check_constructive_reduction({{2, 3}, {-2, 3}, {2, 0}, {-2, 1},
+                                          {-3, 0}, {-3, 1}},
+                                         "RR4", 1,
+                                         {{3}, {2, 0}, {-2, 1}, {-3, 0}, {-3, 1}});
+            check_constructive_reduction({{2, 3}, {2, 3, 4},
+                                          {-2, -3, 5}, {-3, 6}},
+                                         "RR7", 3, {{2, 6}}, true);
+            check_constructive_reduction({{2, 3, 4}, {-2, -3, 5}, {-2, 6}},
+                                         "RR8", 1,
+                                         {{-2, -3, 5}, {-2, 6}}, true);
+        }
+
+        if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE >= 2)
+        {
+            CNF *wide_lemma3 = create_dummy_cnf({{2, 3}, {2, 4}, {-2, 5}});
+            for (const DirectLemmaResult &candidate :
+                 find_direct_lemma23_candidates(*wide_lemma3))
+                assert(candidate.rule != "lemma3");
+            delete_dummy_cnf(wide_lemma3);
+
+            CNF *unit_lemma3 = create_dummy_cnf({{2, 3}, {2, 4}, {-2}});
+            bool found_safe_lemma3 = false;
+            for (const DirectLemmaResult &candidate :
+                 find_direct_lemma23_candidates(*unit_lemma3))
+                found_safe_lemma3 |= candidate.rule == "lemma3";
+            assert(found_safe_lemma3);
+            delete_dummy_cnf(unit_lemma3);
+        }
+
+        cout << "Width-safe constructive reductions passed\n";
+        return;
+    }
+
     check_constructive_reduction({{2, -2, 3}, {4, 0}},
                                  "RR1", 1, {{4, 0}}, true);
     check_constructive_reduction({{2, 0}, {-2, 1}},
@@ -165,9 +346,7 @@ void test_constructive_reductions()
                                  {{3, 0}, {3, 0, 1}, {3, 1}, {-3, 0}});
     check_constructive_reduction({{2, 3}, {2, 3, 4},
                                   {-2, -3, 5}, {-3, 6}},
-                                 "RR7", 0,
-                                 {{2, -2}, {2, -2, 4},
-                                  {-2, 2, 5}, {2, 6}}, true);
+                                 "RR7", 3, {{2, 6}}, true);
     check_constructive_reduction({{2, 3, 4}, {-2, -3, 5}, {-2, 6}},
                                  "RR8", 1,
                                  {{-2, -3, 5}, {-2, 6}}, true);
@@ -176,6 +355,10 @@ void test_constructive_reductions()
                                  "RR9", 0,
                                  {{3, 4, 6}, {3, 4, 7},
                                   {3, 5, 6}, {3, 5, 7}, {-3}}, true);
+    check_constructive_reduction(
+        {{2, 4}, {-2, 4}, {-2, 3, -4}, {3, -4}, {-3}},
+        "RR9", 1,
+        {{2, 3}, {-2, 3}, {-2, 3}, {-3}}, true);
 
     CNF *cascade_input = create_dummy_cnf({{2, 3}, {-2, 3}, {-3, 0}});
     ReductionFixpoint cascade = reduce_to_fixpoint(*cascade_input);
@@ -877,6 +1060,12 @@ void test_universal()
             if (value != "on" && value != "off")
             {
                 cout << "Ожидается assumptions on или assumptions off\n\n";
+                continue;
+            }
+            if (value == "on" && MaxSATSettings.MAXIMUM_CLAUSE_SIZE != -1)
+            {
+                MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+                cout << "Named assumptions недоступны в Max-k-SAT режиме\n\n";
                 continue;
             }
             MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = value == "on";

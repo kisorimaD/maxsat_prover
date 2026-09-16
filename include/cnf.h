@@ -27,6 +27,7 @@ struct MaxSATSettingsType
 };
 
 extern MaxSATSettingsType MaxSATSettings;
+bool named_assumptions_enabled();
 
 struct GroupWitness {
     std::string rule;            // "basic", "lemma2", "lemma3", "double_lemma3", "lemma4"
@@ -191,6 +192,8 @@ struct FormulaVarStats
     vector<int> neg_indices;
 };
 
+using TailBounds = map<int, int>;
+
 class CNF
 {
 
@@ -212,7 +215,8 @@ public:
     ProofNode branch_group(vector<int> ids, int max_partitions = -1,
                            bool construct_proof = false);
 
-    ProofNode xiao_branch(int depth, string first_var = "x");
+    ProofNode xiao_branch(int depth, string first_var = "x",
+                          const TailBounds *tail_bounds = nullptr);
 
     std::vector<std::vector<int>> get_snapshot();
     std::vector<std::vector<int>> get_cert_snapshot();
@@ -265,15 +269,25 @@ struct DirectLemmaResult
 };
 
 bool is_any_unknown_literal(const Literal *l);
+// Enforce the session's structural Max-k-SAT limit.  Returns false when the
+// formula describes no allowed instance.  An arbitrary tail at width k is
+// closed in place; a nonempty tail at width k is impossible.
+bool enforce_maximum_clause_size(CNF &cnf);
+TailBounds derive_tail_bounds(const CNF &cnf);
+bool respects_maximum_clause_size(const CNF &cnf,
+                                  const TailBounds &tail_bounds);
 map<int, FormulaVarStats> analyze_formula(const CNF &cnf);
 GroupResidual materialize_group_residual(const CNF &cnf,
                                          const vector<int> &ids,
                                          const vector<int> &group_masks);
 void destroy_cnf(CNF *cnf);
 Literal *intern_literal(int id, bool inv);
-ReductionStep apply_first_reduction(const CNF &cnf);
-ReductionStep apply_named_reduction(const CNF &cnf, const string &rule);
-ReductionFixpoint reduce_to_fixpoint(const CNF &cnf);
+ReductionStep apply_first_reduction(const CNF &cnf,
+                                    const TailBounds *tail_bounds = nullptr);
+ReductionStep apply_named_reduction(const CNF &cnf, const string &rule,
+                                    const TailBounds *tail_bounds = nullptr);
+ReductionFixpoint reduce_to_fixpoint(const CNF &cnf,
+                                     const TailBounds *tail_bounds = nullptr);
 DirectLemmaResult find_best_direct_lemma23(const CNF &cnf);
 vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf);
 
@@ -301,4 +315,6 @@ extern vector<string> valid_3_partitions;
 void print_clause(Clause &c);
 void print_cnf(CNF &cnf);
 
-void preprocess(int maximum_clause_size = -1);
+// Start one generation session.  The clause-size limit is immutable after
+// this call; use -1 for unrestricted MaxSAT or k >= 1 for Max-k-SAT.
+void preprocess(int maximum_clause_size);

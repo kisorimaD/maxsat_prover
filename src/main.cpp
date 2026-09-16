@@ -2,8 +2,11 @@
 #include "test.h"
 #include "cert_logger.h"
 
+#include <charconv>
 #include <iostream>
 #include <functional>
+#include <limits>
+#include <stdexcept>
 
 using namespace std;
 
@@ -12,7 +15,9 @@ map<string, function<void()>> test_names;
 void print_help()
 {
     cout << "Usage:\n";
-    cout << "./maxsat_prover [test_name]\n\n";
+    cout << "./maxsat_prover [--max-clause-size k] [test_name]\n";
+    cout << "  k: -1 for general MaxSAT, or an integer from 1 to "
+         << numeric_limits<int>::max() - 1 << "\n\n";
     cout << "Available tests:\n";
     cout << "basic\tBasic clauses\n";
     cout << "2branch\tTests all variants with 2 vars (x, y) (3,2)-literals\n";
@@ -25,6 +30,21 @@ void print_help()
     cout << "reductions\tCheck constructive reductions\n";
     cout << "groups3\tCheck precomputed groups\n";
     cout << "safety\tCheck bounds and exposure preconditions\n";
+}
+
+int parse_maximum_clause_size(const string &value)
+{
+    int result = 0;
+    const char *begin = value.data();
+    const char *end = begin + value.size();
+    auto parsed = from_chars(begin, end, result);
+    if (value.empty() || parsed.ec != errc() || parsed.ptr != end)
+        throw invalid_argument("--max-clause-size requires an integer");
+    if (result != -1 && result < 1)
+        throw invalid_argument("--max-clause-size must be -1 or at least 1");
+    if (result == numeric_limits<int>::max())
+        throw invalid_argument("--max-clause-size is too large");
+    return result;
 }
 
 void fill_test_names()
@@ -50,28 +70,56 @@ int main(int argc, const char *argv[])
 {
     fill_test_names();
 
-    if (argc != 2)
-    {
-        print_help();
-        return argc == 1 ? 0 : 1;
-    }
-
-    string test_name = argv[1];
-
-    if (test_names.count(test_name) == 0)
-    {
-        print_help();
-        return 1;
-    }
-
-    if (test_name == "help" || test_name == "--help")
+    if (argc == 1)
     {
         print_help();
         return 0;
     }
+
     try
     {
-        preprocess();
+        string test_name;
+        int maximum_clause_size = -1;
+        bool has_maximum_clause_size = false;
+
+        for (int i = 1; i < argc; ++i)
+        {
+            string argument = argv[i];
+            if (argument == "--max-clause-size")
+            {
+                if (has_maximum_clause_size)
+                    throw invalid_argument("--max-clause-size specified more than once");
+                if (++i == argc)
+                    throw invalid_argument("--max-clause-size requires a value");
+                maximum_clause_size = parse_maximum_clause_size(argv[i]);
+                has_maximum_clause_size = true;
+            }
+            else if (test_name.empty())
+            {
+                test_name = argument;
+            }
+            else
+            {
+                throw invalid_argument("expected exactly one test name");
+            }
+        }
+
+        if (test_name.empty())
+            throw invalid_argument("test name is required");
+
+        if (test_names.count(test_name) == 0)
+        {
+            print_help();
+            return 1;
+        }
+
+        if (test_name == "help" || test_name == "--help")
+        {
+            print_help();
+            return 0;
+        }
+
+        preprocess(maximum_clause_size);
         if (test_name == "test") global_logger.init("pre_certificate.jsonl");
         test_names[test_name]();
         global_logger.close();

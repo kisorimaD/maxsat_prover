@@ -4,7 +4,9 @@ import numpy as np
 
 from .arithmetic import check_vector
 from .formula import (assignment_residual, canonical_formula,
-                      normalize_formula, tail_ids)
+                      check_formula_width, derive_tail_bounds,
+                      normalize_formula, tail_ids,
+                      validate_maximum_clause_size)
 from .refine import expected_children
 from .semantic import optimum_vector
 
@@ -14,7 +16,8 @@ class VerificationError(Exception):
 
 
 class Checker:
-    def __init__(self, numerator, denominator, legacy=False):
+    def __init__(self, numerator, denominator, legacy=False,
+                 maximum_clause_size=-1):
         self.numerator = numerator
         self.denominator = denominator
         self.nodes = 0
@@ -22,6 +25,8 @@ class Checker:
         self.max_depth = 0
         self.assumptions = []
         self.legacy = legacy
+        validate_maximum_clause_size(maximum_clause_size)
+        self.maximum_clause_size = maximum_clause_size
 
     def fail(self, path, message):
         raise VerificationError(
@@ -45,8 +50,17 @@ class Checker:
             wrapper_formula = normalize_formula(node["formula"])
             proof_formula = normalize_formula(node["proof"].get("formula"))
             if wrapper_formula != proof_formula:
-                self.fail(path, "strategy formula differs from its proof formula")
-            vector = self._strategy(node["proof"], path + ".proof", depth + 1)
+                self.fail(
+                    path, "strategy formula differs from its proof formula")
+            try:
+                tail_bounds = derive_tail_bounds(
+                    wrapper_formula, self.maximum_clause_size)
+                check_formula_width(wrapper_formula, self.maximum_clause_size,
+                                    tail_bounds)
+            except ValueError as error:
+                self.fail(path, str(error))
+            vector = self._strategy(node["proof"], path + ".proof", depth + 1,
+                                    tail_bounds)
             try:
                 check_vector(vector, self.numerator, self.denominator)
             except ValueError as error:
@@ -60,32 +74,43 @@ class Checker:
             self.fail(path, "refine must have nonempty children")
         try:
             expected = {canonical_formula(formula)
-                        for formula in expected_children(node, legacy=self.legacy)}
-            actual = {canonical_formula(child["formula"]) for child in children}
+                        for formula in expected_children(
+                            node, legacy=self.legacy,
+                            maximum_clause_size=self.maximum_clause_size)}
+            actual = {canonical_formula(child["formula"])
+                      for child in children}
         except (KeyError, TypeError, ValueError) as error:
             self.fail(path, str(error))
         if actual != expected:
-            self.fail(path, f"refine coverage mismatch: expected {len(expected)}, got {len(actual)}")
+            self.fail(
+                path, f"refine coverage mismatch: expected {len(expected)}, got {len(actual)}")
         if len(actual) != len(children):
             self.fail(path, "duplicate child formula")
         for index, child in enumerate(children):
             self._coverage(child, f"{path}.children[{index}]", depth + 1)
 
-    def _strategy(self, node, path, depth):
+    def _strategy(self, node, path, depth, tail_bounds):
         self.nodes += 1
         self.max_depth = max(self.max_depth, depth)
         if not isinstance(node, dict):
             self.fail(path, "strategy node must be an object")
         kind = node.get("kind")
+        try:
+            node_formula = normalize_formula(node.get("formula"))
+            check_formula_width(node_formula, self.maximum_clause_size,
+                                tail_bounds)
+        except (TypeError, ValueError) as error:
+            self.fail(path, str(error))
         if kind == "call":
             if set(node) != {"kind", "formula"}:
                 self.fail(path, "invalid call fields")
-            normalize_formula(node["formula"])
             return [0]
         if kind == "assumption":
+            if self.maximum_clause_size != -1:
+                self.fail(path, "assumptions are forbidden in Max-k-SAT certificates")
             if set(node) != {"kind", "formula", "name", "vector"}:
                 self.fail(path, "invalid assumption fields")
-            formula = normalize_formula(node["formula"])
+            formula = node_formula
             vector = node["vector"]
             if (not isinstance(node["name"], str) or not node["name"] or
                     not isinstance(vector, list) or not vector or
@@ -96,24 +121,28 @@ class Checker:
             return vector
         if kind != "decompose":
             self.fail(path, f"expected decompose or call, got {kind!r}")
-        formula = normalize_formula(node.get("formula"))
+        formula = node_formula
         alternatives = node.get("alternatives")
         if not isinstance(alternatives, list) or not alternatives:
             legacy = node.get("legacy_vector")
-            self.fail(path, f"decompose has no constructive alternatives; legacy claim={legacy}")
+            self.fail(
+                path, f"decompose has no constructive alternatives; legacy claim={legacy}")
 
         transition = node.get("transition")
         if transition == "assign":
             if len(alternatives) != 2 or type(node.get("variable")) is not int:
-                self.fail(path, "assign needs a variable and exactly two alternatives")
+                self.fail(
+                    path, "assign needs a variable and exactly two alternatives")
             for index, value in enumerate((True, False)):
                 expected_formula, expected_offset, expected_decrease = \
                     assignment_residual(formula, node["variable"], value)
-                actual_formula = normalize_formula(alternatives[index].get("formula"))
+                actual_formula = normalize_formula(
+                    alternatives[index].get("formula"))
                 if (actual_formula != expected_formula or
                         alternatives[index].get("offset") != expected_offset or
                         alternatives[index].get("decrease") != expected_decrease):
-                    self.fail(path, f"assignment alternative {index} is incorrect")
+                    self.fail(
+                        path, f"assignment alternative {index} is incorrect")
         elif transition == "semantic":
             try:
                 child_formulas = [normalize_formula(alternative["formula"])
@@ -121,23 +150,28 @@ class Checker:
                 parent_tails = set(tail_ids(formula))
                 if any(not set(tail_ids(child)).issubset(parent_tails)
                        for child in child_formulas):
-                    raise ValueError("semantic child introduces an unrelated tail")
+                    raise ValueError(
+                        "semantic child introduces an unrelated tail")
                 boundary_ids = sorted(parent_tails)
                 for alternative in alternatives:
                     offset = alternative.get("offset")
                     if offset != "infer" and (type(offset) is not int or
-                                               not 0 <= offset <= len(formula)):
-                        raise ValueError("offset must be an integer between zero and parent size")
-                parent_values = optimum_vector(formula, boundary_ids).astype(np.int32)
+                                              not 0 <= offset <= len(formula)):
+                        raise ValueError(
+                            "offset must be an integer between zero and parent size")
+                parent_values = optimum_vector(
+                    formula, boundary_ids).astype(np.int32)
                 child_values = [optimum_vector(child, boundary_ids).astype(np.int32)
                                 for child in child_formulas]
                 if any(alternative["offset"] == "infer"
                        for alternative in alternatives):
                     if len(alternatives) != 1:
-                        raise ValueError("inferred offset needs one semantic child")
+                        raise ValueError(
+                            "inferred offset needs one semantic child")
                     differences = parent_values - child_values[0]
                     if differences.min() < 0 or differences.min() != differences.max():
-                        raise ValueError("semantic reduction has no constant nonnegative offset")
+                        raise ValueError(
+                            "semantic reduction has no constant nonnegative offset")
                 else:
                     shifted = [values + alternative["offset"]
                                for values, alternative in zip(child_values, alternatives)]
@@ -153,7 +187,8 @@ class Checker:
             for alternative, child in zip(alternatives, child_formulas):
                 expected = len(formula) - len(child)
                 if alternative.get("decrease") != expected:
-                    self.fail(path, "semantic alternative has incorrect decrease")
+                    self.fail(
+                        path, "semantic alternative has incorrect decrease")
         else:
             self.fail(path, f"unknown transition {transition!r}")
 
@@ -162,13 +197,20 @@ class Checker:
             if set(alternative) != {"offset", "decrease", "formula", "proof"}:
                 self.fail(path, f"invalid fields in alternative {index}")
             child_formula = normalize_formula(alternative["formula"])
-            proof_formula = normalize_formula(alternative["proof"].get("formula"))
+            try:
+                check_formula_width(child_formula, self.maximum_clause_size,
+                                    tail_bounds)
+            except ValueError as error:
+                self.fail(path, f"alternative {index}: {error}")
+            proof_formula = normalize_formula(
+                alternative["proof"].get("formula"))
             if child_formula != proof_formula:
-                self.fail(path, f"alternative {index} formula differs from child proof")
+                self.fail(
+                    path, f"alternative {index} formula differs from child proof")
             local_decrease = alternative["decrease"]
             child_vector = self._strategy(alternative["proof"],
                                           f"{path}.alternatives[{index}].proof",
-                                          depth + 1)
+                                          depth + 1, tail_bounds)
             vector.extend(local_decrease + value for value in child_vector)
         return vector
 
@@ -176,20 +218,39 @@ class Checker:
 def load_and_check(filename):
     with open(filename, "r", encoding="utf-8") as stream:
         certificate = json.load(stream)
-    if set(certificate) != {"format", "target", "proof"}:
-        raise VerificationError("top-level fields are invalid")
-    if certificate["format"] not in ("maxsat-local-proof-v1", "maxsat-local-proof-v2"):
+    certificate_format = certificate.get("format")
+    if certificate_format not in ("maxsat-local-proof-v1",
+                                   "maxsat-local-proof-v2",
+                                   "maxsat-local-proof-v3"):
         raise VerificationError("unknown certificate format")
+    expected_fields = ({"format", "target", "proof", "maximum_clause_size", "scope"}
+                       if certificate_format == "maxsat-local-proof-v3"
+                       else {"format", "target", "proof"})
+    if set(certificate) != expected_fields:
+        raise VerificationError("top-level fields are invalid")
     target = certificate["target"]
     if set(target) != {"numerator", "denominator"}:
         raise VerificationError("invalid target")
-    legacy = certificate["format"] == "maxsat-local-proof-v1"
-    checker = Checker(target["numerator"], target["denominator"], legacy=legacy)
+    legacy = certificate_format == "maxsat-local-proof-v1"
+    maximum_clause_size = (certificate["maximum_clause_size"]
+                           if certificate_format == "maxsat-local-proof-v3"
+                           else -1)
+    if certificate_format == "maxsat-local-proof-v3":
+        expected_scope = {
+            "kind": "local_template_family",
+            "degree_coverage": "certificate_premise",
+        }
+        if certificate["scope"] != expected_scope:
+            raise VerificationError("invalid proof scope")
+    checker = Checker(target["numerator"],
+                      target["denominator"], legacy=legacy,
+                      maximum_clause_size=maximum_clause_size)
     proof = certificate["proof"]
     # v1 encoded the initial family declaration as an exposure of []. It is
     # a declaration of the root family, never a coverage claim about [].
     if legacy and proof.get("rule") == "expose_variable":
         from .refine import declared_root
-        proof = declared_root(proof, legacy=True)
+        proof = declared_root(proof, legacy=True,
+                              maximum_clause_size=maximum_clause_size)
     checker.check(proof)
     return checker
