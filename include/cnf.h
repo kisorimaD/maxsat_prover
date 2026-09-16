@@ -21,6 +21,7 @@ double branching_factor(const vector<int> &a, double tol = 1e-12);
 struct MaxSATSettingsType
 {
     int MAXIMUM_CLAUSE_SIZE;
+    int MAXIMUM_VARIABLE_OCCURRENCES;
     // Strict proof-search mode.  When false, heuristic leaves whose only
     // justification is a named paper lemma are not considered at all.
     bool ALLOW_NAMED_ASSUMPTIONS;
@@ -301,4 +302,5 @@ extern vector<string> valid_3_partitions;
 void print_clause(Clause &c);
 void print_cnf(CNF &cnf);
 
-void preprocess(int maximum_clause_size = -1);
+void preprocess(int maximum_clause_size = -1,
+                int maximum_variable_occurrences = -1);

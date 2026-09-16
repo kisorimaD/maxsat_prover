@@ -73,6 +73,10 @@ void CertLogger::log_add_variable(
     std::ostringstream ss;
     ss << "{\"node_id\":" << parent_id
        << ",\"kind\":\"root_family\""
+       << ",\"maximum_clause_size\":"
+       << MaxSATSettings.MAXIMUM_CLAUSE_SIZE
+       << ",\"maximum_variable_occurrences\":"
+       << MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES
        << ",\"formula\":" << formula_to_json(snapshot)
        << ",\"variable\":" << var_id
        << ",\"positive\":" << pos_deg

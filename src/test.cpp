@@ -45,7 +45,11 @@ void test_safety()
     assert(!check_group_validity(oversized_group, 5, diag));
     rejected([] { validate_degree(1, 3, SINGLETON); });
     rejected([] { validate_degree(1, 4, SINGLETON); });
-    validate_degree(3, 1, SINGLETON);
+    if (MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES == -1 ||
+        MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES >= 4)
+        validate_degree(3, 1, SINGLETON);
+    else
+        rejected([] { validate_degree(3, 1, SINGLETON); });
 
     unique_ptr<CNF, decltype(&destroy_cnf)> tied_assignments(
         new CNF(), destroy_cnf);
@@ -60,17 +64,29 @@ void test_safety()
     assert(!tied_branch.alternatives.empty());
     assert(tied_branch.vec == vector<int>({6}));
 
-    unique_ptr<CNF, decltype(&destroy_cnf)> parent(new CNF(), destroy_cnf);
-    parent->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false),
-                                                         &UNKNOWN_NOT_EMPTY_LITERAL}));
-    auto children = add_new_var_in_place(parent.get(), "safety_y", [](CNF*) { return 0; },
-                                         {{3, 1, SINGLETON}});
-    assert(!children.empty());
-    for (CNF *child : children)
+    if (MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES == -1 ||
+        MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES >= 2)
     {
-        assert(analyze_formula(*child).count(VAR2ID.at("safety_y")));
-        assert(child->get_cert_snapshot() != parent->get_cert_snapshot());
-        destroy_cnf(child);
+        unique_ptr<CNF, decltype(&destroy_cnf)> parent(new CNF(), destroy_cnf);
+        parent->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false),
+                                                             &UNKNOWN_NOT_EMPTY_LITERAL}));
+        LiteralDegType degree =
+            MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES == -1 ||
+                    MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES >= 4
+                ? LiteralDegType{3, 1, SINGLETON}
+                : LiteralDegType{1, 1, ANY};
+        auto children = add_new_var_in_place(
+            parent.get(), "safety_y", [](CNF*) { return 0; }, {degree});
+        if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE == 1)
+            assert(children.empty());
+        else
+            assert(!children.empty());
+        for (CNF *child : children)
+        {
+            assert(analyze_formula(*child).count(VAR2ID.at("safety_y")));
+            assert(child->get_cert_snapshot() != parent->get_cert_snapshot());
+            destroy_cnf(child);
+        }
     }
     cout << "Mask bounds and exposure safety tests passed\n";
 }
@@ -686,8 +702,10 @@ void test_universal()
     vector<LiteralDegType> variants;
     for (const LiteralDegType &literal : POSSIBLE_LITERALS)
     {
-        // (2,1)-типы доступны через sv, но по умолчанию выключены.
-        if (literal.i != 2 || literal.j != 1)
+        // Без ограничения (2,1)-типы доступны через sv.
+        // При ограничении они могут быть единственными допустимыми типами.
+        if (MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES != -1 ||
+            literal.i != 2 || literal.j != 1)
             variants.push_back(literal);
     }
 
@@ -890,6 +908,14 @@ void test_universal()
             if (value != "on" && value != "off")
             {
                 cout << "Ожидается assumptions on или assumptions off\n\n";
+                continue;
+            }
+            if (value == "on" &&
+                (MaxSATSettings.MAXIMUM_CLAUSE_SIZE != -1 ||
+                 MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES != -1))
+            {
+                cout << "Named assumptions недоступны при ограничениях "
+                        "на клозы или вхождения переменных\n\n";
                 continue;
             }
             MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = value == "on";

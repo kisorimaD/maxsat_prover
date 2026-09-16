@@ -18,7 +18,7 @@
 
 using namespace std;
 
-MaxSATSettingsType MaxSATSettings{-1, true};
+MaxSATSettingsType MaxSATSettings{-1, -1, true};
 
 map<int, string> ID2VAR;
 map<string, int> VAR2ID;
@@ -139,6 +139,10 @@ void validate_degree(int positive, int negative, LitType type)
         throw invalid_argument("degrees must be positive and total at most 30");
     if (type == SINGLETON && negative != 1)
         throw invalid_argument("SINGLETON requires negative degree 1");
+    if (MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES != -1 &&
+        positive + negative > MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES)
+        throw invalid_argument(
+            "variable degree exceeds --max-variable-occurrences");
 }
 
 static void validate_mask_input(const CNF &cnf, const vector<int> &ids)
@@ -1583,7 +1587,7 @@ void print_cnf(CNF &cnf)
 static unordered_map<string, long long> used_node_storage;
 unordered_map<string, long long> *used_nodes = &used_node_storage;
 
-void preprocess(int maximum_clause_size)
+void preprocess(int maximum_clause_size, int maximum_variable_occurrences)
 {
     used_nodes->clear();
     valid_3_partitions.clear();
@@ -1593,13 +1597,25 @@ void preprocess(int maximum_clause_size)
     VAR2ID["?+"] = 1;
 
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
-    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
+    MaxSATSettings.MAXIMUM_VARIABLE_OCCURRENCES =
+        maximum_variable_occurrences;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS =
+        maximum_clause_size == -1 && maximum_variable_occurrences == -1;
 
     POSSIBLE_LITERALS = {{3, 1, SINGLETON},
                          {2, 2, ANY},       {3, 2, ANY},
                          {2, 3, ANY},
                          {4, 1, SINGLETON}, {2, 1, ANY},
                          {2, 1, SINGLETON}};
+
+    if (maximum_variable_occurrences != -1)
+        POSSIBLE_LITERALS.erase(
+            remove_if(POSSIBLE_LITERALS.begin(), POSSIBLE_LITERALS.end(),
+                      [maximum_variable_occurrences](LiteralDegType degree) {
+                          return degree.i + degree.j >
+                                 maximum_variable_occurrences;
+                      }),
+            POSSIBLE_LITERALS.end());
 
     ifstream infile("groups3.txt");
     if (!infile.is_open())

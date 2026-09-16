@@ -4,7 +4,10 @@ import numpy as np
 
 from .arithmetic import check_vector
 from .formula import (assignment_residual, canonical_formula,
-                      normalize_formula, tail_ids)
+                      check_formula_width, check_variable_occurrences,
+                      derive_tail_bounds, normalize_formula, tail_ids,
+                      validate_maximum_clause_size,
+                      validate_maximum_variable_occurrences)
 from .refine import expected_children
 from .semantic import optimum_vector
 
@@ -14,7 +17,9 @@ class VerificationError(Exception):
 
 
 class Checker:
-    def __init__(self, numerator, denominator, legacy=False):
+    def __init__(self, numerator, denominator, legacy=False,
+                 maximum_clause_size=-1,
+                 maximum_variable_occurrences=-1):
         self.numerator = numerator
         self.denominator = denominator
         self.nodes = 0
@@ -22,6 +27,11 @@ class Checker:
         self.max_depth = 0
         self.assumptions = []
         self.legacy = legacy
+        validate_maximum_clause_size(maximum_clause_size)
+        validate_maximum_variable_occurrences(
+            maximum_variable_occurrences)
+        self.maximum_clause_size = maximum_clause_size
+        self.maximum_variable_occurrences = maximum_variable_occurrences
 
     def fail(self, path, message):
         raise VerificationError(
@@ -46,7 +56,17 @@ class Checker:
             proof_formula = normalize_formula(node["proof"].get("formula"))
             if wrapper_formula != proof_formula:
                 self.fail(path, "strategy formula differs from its proof formula")
-            vector = self._strategy(node["proof"], path + ".proof", depth + 1)
+            try:
+                check_variable_occurrences(
+                    wrapper_formula, self.maximum_variable_occurrences)
+                tail_bounds = derive_tail_bounds(
+                    wrapper_formula, self.maximum_clause_size)
+                check_formula_width(wrapper_formula, self.maximum_clause_size,
+                                    tail_bounds)
+            except ValueError as error:
+                self.fail(path, str(error))
+            vector = self._strategy(node["proof"], path + ".proof", depth + 1,
+                                    tail_bounds)
             try:
                 check_vector(vector, self.numerator, self.denominator)
             except ValueError as error:
@@ -60,8 +80,17 @@ class Checker:
             self.fail(path, "refine must have nonempty children")
         try:
             expected = {canonical_formula(formula)
-                        for formula in expected_children(node, legacy=self.legacy)}
-            actual = {canonical_formula(child["formula"]) for child in children}
+                        for formula in expected_children(
+                            node, legacy=self.legacy,
+                            maximum_clause_size=self.maximum_clause_size,
+                            maximum_variable_occurrences=
+                            self.maximum_variable_occurrences)}
+            actual = set()
+            for child in children:
+                child_formula = normalize_formula(child["formula"])
+                check_variable_occurrences(
+                    child_formula, self.maximum_variable_occurrences)
+                actual.add(canonical_formula(child_formula))
         except (KeyError, TypeError, ValueError) as error:
             self.fail(path, str(error))
         if actual != expected:
@@ -71,21 +100,32 @@ class Checker:
         for index, child in enumerate(children):
             self._coverage(child, f"{path}.children[{index}]", depth + 1)
 
-    def _strategy(self, node, path, depth):
+    def _strategy(self, node, path, depth, tail_bounds):
         self.nodes += 1
         self.max_depth = max(self.max_depth, depth)
         if not isinstance(node, dict):
             self.fail(path, "strategy node must be an object")
         kind = node.get("kind")
+        try:
+            node_formula = normalize_formula(node.get("formula"))
+            check_variable_occurrences(
+                node_formula, self.maximum_variable_occurrences)
+            check_formula_width(node_formula, self.maximum_clause_size,
+                                tail_bounds)
+        except (TypeError, ValueError) as error:
+            self.fail(path, str(error))
         if kind == "call":
             if set(node) != {"kind", "formula"}:
                 self.fail(path, "invalid call fields")
-            normalize_formula(node["formula"])
             return [0]
         if kind == "assumption":
+            if (self.maximum_clause_size != -1 or
+                    self.maximum_variable_occurrences != -1):
+                self.fail(
+                    path, "assumptions are forbidden in bounded certificates")
             if set(node) != {"kind", "formula", "name", "vector"}:
                 self.fail(path, "invalid assumption fields")
-            formula = normalize_formula(node["formula"])
+            formula = node_formula
             vector = node["vector"]
             if (not isinstance(node["name"], str) or not node["name"] or
                     not isinstance(vector, list) or not vector or
@@ -96,7 +136,7 @@ class Checker:
             return vector
         if kind != "decompose":
             self.fail(path, f"expected decompose or call, got {kind!r}")
-        formula = normalize_formula(node.get("formula"))
+        formula = node_formula
         alternatives = node.get("alternatives")
         if not isinstance(alternatives, list) or not alternatives:
             legacy = node.get("legacy_vector")
@@ -162,13 +202,20 @@ class Checker:
             if set(alternative) != {"offset", "decrease", "formula", "proof"}:
                 self.fail(path, f"invalid fields in alternative {index}")
             child_formula = normalize_formula(alternative["formula"])
+            try:
+                check_variable_occurrences(
+                    child_formula, self.maximum_variable_occurrences)
+                check_formula_width(child_formula, self.maximum_clause_size,
+                                    tail_bounds)
+            except ValueError as error:
+                self.fail(path, f"alternative {index}: {error}")
             proof_formula = normalize_formula(alternative["proof"].get("formula"))
             if child_formula != proof_formula:
                 self.fail(path, f"alternative {index} formula differs from child proof")
             local_decrease = alternative["decrease"]
             child_vector = self._strategy(alternative["proof"],
                                           f"{path}.alternatives[{index}].proof",
-                                          depth + 1)
+                                          depth + 1, tail_bounds)
             vector.extend(local_decrease + value for value in child_vector)
         return vector
 
@@ -176,20 +223,59 @@ class Checker:
 def load_and_check(filename):
     with open(filename, "r", encoding="utf-8") as stream:
         certificate = json.load(stream)
-    if set(certificate) != {"format", "target", "proof"}:
-        raise VerificationError("top-level fields are invalid")
-    if certificate["format"] not in ("maxsat-local-proof-v1", "maxsat-local-proof-v2"):
+    certificate_format = certificate.get("format")
+    if certificate_format not in ("maxsat-local-proof-v1",
+                                   "maxsat-local-proof-v2",
+                                   "maxsat-local-proof-v3",
+                                   "maxsat-local-proof-v4"):
         raise VerificationError("unknown certificate format")
+    if certificate_format == "maxsat-local-proof-v4":
+        expected_fields = {
+            "format", "target", "proof", "maximum_clause_size",
+            "maximum_variable_occurrences", "scope",
+        }
+    elif certificate_format == "maxsat-local-proof-v3":
+        expected_fields = {
+            "format", "target", "proof", "maximum_clause_size", "scope",
+        }
+    else:
+        expected_fields = {"format", "target", "proof"}
+    if set(certificate) != expected_fields:
+        raise VerificationError("top-level fields are invalid")
     target = certificate["target"]
     if set(target) != {"numerator", "denominator"}:
         raise VerificationError("invalid target")
-    legacy = certificate["format"] == "maxsat-local-proof-v1"
-    checker = Checker(target["numerator"], target["denominator"], legacy=legacy)
+    legacy = certificate_format == "maxsat-local-proof-v1"
+    maximum_clause_size = (certificate["maximum_clause_size"]
+                           if certificate_format in
+                           ("maxsat-local-proof-v3", "maxsat-local-proof-v4")
+                           else -1)
+    maximum_variable_occurrences = (
+        certificate["maximum_variable_occurrences"]
+        if certificate_format == "maxsat-local-proof-v4" else -1)
+    if certificate_format in ("maxsat-local-proof-v3",
+                              "maxsat-local-proof-v4"):
+        expected_scope = {
+            "kind": "local_template_family",
+            "degree_coverage": "certificate_premise",
+        }
+        if certificate["scope"] != expected_scope:
+            raise VerificationError("invalid proof scope")
+    try:
+        checker = Checker(
+            target["numerator"], target["denominator"], legacy=legacy,
+            maximum_clause_size=maximum_clause_size,
+            maximum_variable_occurrences=maximum_variable_occurrences)
+    except ValueError as error:
+        raise VerificationError(str(error)) from error
     proof = certificate["proof"]
     # v1 encoded the initial family declaration as an exposure of []. It is
     # a declaration of the root family, never a coverage claim about [].
     if legacy and proof.get("rule") == "expose_variable":
         from .refine import declared_root
-        proof = declared_root(proof, legacy=True)
+        proof = declared_root(
+            proof, legacy=True,
+            maximum_clause_size=maximum_clause_size,
+            maximum_variable_occurrences=maximum_variable_occurrences)
     checker.check(proof)
     return checker
