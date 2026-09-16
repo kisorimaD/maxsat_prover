@@ -271,8 +271,9 @@ ProofNode CNF::branch(vector<int> ids)
 
             if (count_set_bits(clauses_mask[other_mask]) >= max_val)
             {
-                if ((*this).clauses.size() - no_clauses_mask[other_mask] <=
-                        clauses_mask[mask] &&
+                if ((*this).clauses.size() -
+                            count_set_bits(no_clauses_mask[other_mask]) <=
+                        count_set_bits(clauses_mask[mask]) &&
                     other_mask > mask)
                 {
                     continue;

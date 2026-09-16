@@ -47,6 +47,19 @@ void test_safety()
     rejected([] { validate_degree(1, 4, SINGLETON); });
     validate_degree(3, 1, SINGLETON);
 
+    unique_ptr<CNF, decltype(&destroy_cnf)> tied_assignments(
+        new CNF(), destroy_cnf);
+    for (int i = 0; i < 3; ++i)
+    {
+        tied_assignments->clauses.push_back(
+            new Clause(vector<Literal*>{intern_literal(2, false)}));
+        tied_assignments->clauses.push_back(
+            new Clause(vector<Literal*>{intern_literal(2, true)}));
+    }
+    ProofNode tied_branch = tied_assignments->branch({2});
+    assert(!tied_branch.alternatives.empty());
+    assert(tied_branch.vec == vector<int>({6}));
+
     unique_ptr<CNF, decltype(&destroy_cnf)> parent(new CNF(), destroy_cnf);
     parent->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false),
                                                          &UNKNOWN_NOT_EMPTY_LITERAL}));
