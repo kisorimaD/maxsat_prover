@@ -561,6 +561,7 @@ ReductionFixpoint reduce_to_fixpoint(const CNF &cnf)
         }
 
         result.total_decrease += step.decrease;
+        step.formula_snapshot = result.cnf->get_cert_snapshot();
         CNF *next = step.cnf;
         step.cnf = nullptr;
         result.steps.push_back(step);
@@ -643,18 +644,18 @@ vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf)
     return candidates;
 }
 
-DirectLemmaResult find_best_direct_lemma23(const CNF &cnf)
+DirectLemmaResult find_best_direct_lemma23(const CNF &cnf, double q)
 {
     DirectLemmaResult best;
     for (const DirectLemmaResult &candidate :
          find_direct_lemma23_candidates(cnf))
     {
         bool strictly_better = !best.applied ||
-                               candidate.tau < best.tau - 1e-12;
+                               branching_weight(candidate.vec, q) < branching_weight(best.vec, q);
         bool step55_tie = best.applied &&
                           candidate.rule == "double_lemma3" &&
                           best.rule == "lemma3" &&
-                          abs(candidate.tau - best.tau) <= 1e-12;
+                          branching_weight(candidate.vec, q) == branching_weight(best.vec, q);
         if (strictly_better || step55_tie)
             best = candidate;
     }

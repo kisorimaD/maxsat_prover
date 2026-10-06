@@ -18,6 +18,9 @@ void print_help()
     cout << "2branch\tTests all variants with 2 vars (x, y) (3,2)-literals\n";
     cout << "3branch\tTests all variants with 3 vars (x, y, z) (3,2)-literals\n";
     cout << "factor\tTests factor branch computing\n";
+    cout << "weight\tCheck fixed-target strategy selection\n";
+    cout << "cache\tCheck residual formula caching\n";
+    cout << "cover\tCheck substitution groups and weighted covers\n";
     cout << "subset\tInteractive test for subset func\n";
     cout << "addvar\tTest add_new_var func\n";
     cout << "nounknown\tTest no unknown literals\n";
@@ -33,6 +36,9 @@ void fill_test_names()
     test_names["2branch"] = test_branch_two_vars;
     test_names["3branch"] = test_branch_three_vars;
     test_names["factor"] = test_branching_factor;
+    test_names["weight"] = test_weighted_search;
+    test_names["cache"] = test_strategy_cache;
+    test_names["cover"] = test_group_cover;
     test_names["subset"] = test_subset_func;
     test_names["addvar"] = test_add_new_var;
     test_names["nounknown"] = test_no_unknown_literal;

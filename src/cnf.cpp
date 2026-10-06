@@ -1,5 +1,7 @@
 #include "cnf.h"
 #include "cert_logger.h"
+#include "strategy_cache.h"
+#include "group_cover.h"
 
 #include <algorithm>
 #include <assert.h>
@@ -9,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <math.h>
+#include <cmath>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -108,7 +111,7 @@ std::vector<std::vector<int>> CNF::get_snapshot()
     return snap;
 }
 
-std::vector<std::vector<int>> CNF::get_cert_snapshot()
+std::vector<std::vector<int>> CNF::get_cert_snapshot() const
 {
     std::vector<std::vector<int>> snap;
     for (Clause *c : clauses)
@@ -387,54 +390,8 @@ bool get_next_product(vector<int> &cs)
     return false;
 }
 
-bool get_next_partition(std::vector<int> &c, int k)
-{
-    int i = c.size() - 1;
-
-    while (i >= 0)
-    {
-        int mx = -1;
-        for (int j = 0; j < i; j++)
-            if (c[j] > mx)
-                mx = c[j];
-
-        int limit = mx + 1;
-        if (k != -1 && limit > k - 1)
-            limit = k - 1;
-
-        if (c[i] < limit)
-        {
-            c[i]++;
-            return true;
-        }
-
-        c[i] = 0;
-        i--;
-    }
-
-    return false;
-}
-
+// Legacy partition fixture retained only for the groups3 validity test.
 vector<string> valid_3_partitions;
-int partition_ind;
-
-bool get_next_3_partition_fast(std::vector<int> &c,
-                               vector<bool> &mask_of_reduced_clauses)
-{
-    if (partition_ind == valid_3_partitions.size())
-        return false;
-
-    int skip_cnt = 0;
-    for (int i = 0; i < 8; ++i)
-    {
-        if (!mask_of_reduced_clauses[i])
-            c[skip_cnt++] = valid_3_partitions[partition_ind][i] - '0';
-    }
-
-    partition_ind++;
-
-    return true;
-}
 
 bool is_any_unknown_literal(const Literal *l)
 {
@@ -842,52 +799,15 @@ bool check_group_validity(const vector<int>& group_masks, int k, string& diag)
     return true;
 }
 
-ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
-                            bool construct_proof)
+ProofNode CNF::branch_group(vector<int> ids, int max_groups,
+                            bool construct_proof, double q)
 {
     validate_mask_input(*this, ids);
-    partition_ind = 0;
-
+    if (max_groups < -1) throw invalid_argument("invalid group-count limit");
     int k = ids.size();
-
-    bool is_3_case = false; // Случай, когда формулу группируют по 3 переменным.
-                            // Для него предподсчитаны все разбиения
-    if (k == 3)
-    {
-        is_3_case = true;
-    }
-
-    set<int> using_ids;
-    for (Clause *cl : this->clauses)
-    {
-        for (Literal *l : cl->lits)
-        {
-            if (l->id != UNKNOWN_LITERAL.id &&
-                l->id != UNKNOWN_NOT_EMPTY_LITERAL.id)
-            {
-                using_ids.insert(l->id);
-            }
-        }
-    }
-    int kreal =
-        using_ids.size(); // Реальное количество литералов, которое мы используем
-
-    vector<int> branch;
-
-    // set <int> true_clauses_masks;
-    vector<int> clauses_mask(1 << k);
-    vector<int> reduced_clauses(1 << k);
-    vector<int> no_clauses_mask(1 << k);
-
-    calculate_variants(*this, ids, clauses_mask, reduced_clauses,
-                       no_clauses_mask);
-
-    vector<bool> mask_of_reduced_subsets(
-        1 << k, true);    // Маска подстановок, которые удалили
-    vector<int> rclauses; // Маски выполненных клоз (YES) для каждой оставшейся
-                          // подстановки [rcnt]
-    vector<int> no_clauses;
-    vector<int> masks; // Маска подстановки для оставшихся подстановок
+    vector<int> clauses_mask(1 << k), reduced_clauses(1 << k), no_clauses_mask(1 << k);
+    calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
+    vector<int> masks;
 
     std::map<int, int> current_subsumptions;
 
@@ -936,488 +856,153 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
 
         if (!is_subset)
         {
-            rclauses.push_back(clauses_mask[mask]);
-            no_clauses.push_back(no_clauses_mask[mask]);
             masks.push_back(mask);
-            mask_of_reduced_subsets[mask] = false;
         }
     }
 
-    int rcnt = rclauses.size(); // Количество оставшихся подстановок, после
-                                // удаления тех, которые полностью входят в другие
-
-    double mn_factor = 100000;
-    vector<int> mn_branch;
-
-    vector<int> cs(rcnt, 0);
-
-    vector<int> mn_partition(rcnt, -1);
-
-    vector<GroupWitness> mn_witnesses;
-
-    struct GroupCombination
-    {
+    struct Candidate {
+        vector<int> rows;
         vector<int> vec;
-        vector<GroupWitness> witnesses;
+        GroupWitness witness;
     };
+    vector<Candidate> candidates;
+    vector<WeightedGroup> weighted;
+    vector<int> retained_index(1 << k, -1);
+    for (int i = 0; i < (int)masks.size(); ++i) retained_index[masks[i]] = i;
 
-    struct ResidualSearchSummary
-    {
-        int decrease = 0;
-        vector<int> vec;
-        vector<string> rules;
-        vector<vector<int>> formula;
-        double factor = 100.0;
-        string rule;
-    };
-    map<unsigned long long, ResidualSearchSummary> residual_search_cache;
-
-    do
-    {
-        bool got_zero = false;
-        bool no_merge_config = false;
-        vector<GroupCombination> combinations(1);
-
-        int max_class = -1;
-
-        for (int i = 0; i < rcnt; ++i)
+    // Enumerate images over ALL assignments. A useful group may also contain
+    // dominated rows; only its intersection with retained rows needs covering.
+    enumerate_substitution_groups(k, [&](const vector<int> &group_subst_masks) {
+        vector<int> coverage;
+        for (int row : group_subst_masks)
+            if (retained_index[row] >= 0) coverage.push_back(retained_index[row]);
+        if (coverage.empty()) return;
+        GroupResidual group_residual =
+            materialize_group_residual(*this, ids, group_subst_masks);
+        if (!group_residual.valid)
         {
-            if (cs[i] > max_class)
-                max_class = cs[i];
+            if (group_residual.cnf) destroy_cnf(group_residual.cnf);
+            return;
         }
+        unique_ptr<CNF, void (*)(CNF *)> residual_guard(group_residual.cnf, destroy_cnf);
+        vector<pair<vector<int>, GroupWitness>> extra_choices;
 
-        for (int c = 0; c <= max_class; ++c)
+        if (group_subst_masks.size() >= 2 && MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
         {
-            bool has_class = false;
-
-            int gclauses = 0;
-            int gnoclauses = 0;
-
-            int partition_size = 0;
-
-            vector<int> clause_used((*this).clauses.size(), -1);
-            vector<bool> clause_only_no((*this).clauses.size(), true);
-
-            for (int i = 0; i < rcnt; ++i)
-            {
-                if (cs[i] == c)
-                {
-                    partition_size++;
-
-                    if (!has_class)
-                    {
-                        gclauses = rclauses[i];
-                        gnoclauses = no_clauses[i];
-                    }
-                    else
-                    {
-                        gclauses &= rclauses[i];
-                        gnoclauses &= no_clauses[i];
-                    }
-
-                    for (int cl = 0; cl < (int)this->clauses.size(); ++cl)
-                    {
-                        if (((rclauses[i] >> cl) & 1) == 0)
-                        {
-                            if (clause_used[cl] == -1)
-                            {
-                                clause_used[cl] = i;
-                            }
-                            else
-                            {
-                                clause_used[cl] = -2;
-                            }
-                        }
-                        else
-                        {
-                            clause_only_no[cl] = false;
-                        }
-
-                        if ((no_clauses[i] >> cl) & 1)
-                        {
-                            clause_used[cl] = -2;
-                        }
-                    }
-
-                    has_class = true;
-                }
-            }
-
-            if (!has_class)
-                continue;
-
-            // -------------------------------------------------------
-            // Материализация остаточной формулы группы.
-            //
-            // Каждая переменная ветвления заменяется
-            // либо на константу 0/1, либо на одну из новых свободных
-            // переменных (возможно с отрицанием). Группа корректна
-            // Все проверки корректности отображения выполняются внутри
-            // materialize_group_residual.
-            // -------------------------------------------------------
-
-            // Собираем маски подстановок текущего класса c
-            vector<int> group_subst_masks;
-            for (int i = 0; i < rcnt; ++i)
-                if (cs[i] == c)
-                    group_subst_masks.push_back(masks[i]);
-
-            GroupResidual group_residual =
-                materialize_group_residual(*this, ids, group_subst_masks);
-            if (!group_residual.valid ||
-                group_residual.common_satisfied_mask != gclauses ||
-                group_residual.common_empty_mask != gnoclauses)
-            {
-                if (group_residual.cnf)
-                    destroy_cnf(group_residual.cnf);
-                no_merge_config = true;
-                break;
-            }
-            unique_ptr<CNF, void (*)(CNF *)> residual_guard(group_residual.cnf,
-                                                            destroy_cnf);
-
-            vector<pair<vector<int>, GroupWitness>> extra_choices;
-
-            if (partition_size >= 2)
-            {
-                // -------------------------------------------------------
-                // Единая фаза подсчёта статистики по repr-переменным.
-                //
-                // Для каждого представителя (rid) и каждой полярности
-                // считаем:
-                //   count     — число клоз с вхождением (с дедупликацией)
-                //   unit_count — из них: unit-клозы (только этот repr, без ? и ?+)
-                //   min_D     — мин. количество ДРУГИХ repr-переменных в клозе
-                //
-                // Подсчёт ведётся по клозам (не по литералам!), чтобы
-                // корректно обрабатывать случай когда несколько исходных
-                // переменных ветвления склеились в одного представителя.
-                // -------------------------------------------------------
-
-                map<int, FormulaVarStats> repr_stats =
-                    analyze_formula(*group_residual.cnf);
-
-                // -------------------------------------------------------
-                // Применение лемм на основе precomputed repr_stats
-                // -------------------------------------------------------
-
-                if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
-                {
-                    for (const DirectLemmaResult &direct_lemma :
-                         find_direct_lemma23_candidates(*group_residual.cnf))
-                    {
-                        GroupWitness witness;
-                        witness.rule = direct_lemma.rule;
-                        witness.lemma_var_id = direct_lemma.pivot_id;
-                        witness.second_lemma_var_id = direct_lemma.second_pivot_id;
-                        witness.lemma_local_D = direct_lemma.local_D;
-                        witness.lemma_pos_count = direct_lemma.pos_count;
-                        witness.lemma_neg_count = direct_lemma.neg_count;
-                        witness.claimed_vector = direct_lemma.vec;
-                        extra_choices.push_back({direct_lemma.vec, witness});
-                    }
-                }
-
-                if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
-                {
-                    for (auto const &[id, st] : repr_stats)
-                    {
-                        int pos = st.pos_count;
-                        int neg = st.neg_count;
-
-                    // ---------- Лемма 4 ----------
-                    // Условие: i >= j >= 2.
-                    // Если хотя бы (j-1) клоз с самим (i,j)-литералом
-                    // являются unit-клозами, вектор ветвления >= (i, 2j+1).
-                        if (pos >= 2 && neg >= 2)
-                        {
-                        // Пробуем оба направления
-                        for (int try_dir = 0; try_dir < 2; ++try_dir)
-                        {
-                            int local_j    = (try_dir == 0) ? neg : pos;
-                            int local_i4   = (try_dir == 0) ? pos : neg;
-                            int unit_count = (try_dir == 0) ? st.pos_unit_count : st.neg_unit_count;
-
-                            if (local_i4 < local_j) continue; // нужно i >= j
-
-                            if (unit_count >= local_j - 1)
-                            {
-                                GroupWitness witness;
-                                witness.rule = "lemma4";
-                                witness.lemma_var_id = id;
-                                witness.lemma_local_D = local_j;
-                                witness.lemma_pos_count = pos;
-                                witness.lemma_neg_count = neg;
-                                witness.claimed_vector = {local_i4, 2 * local_j + 1};
-                                extra_choices.push_back(
-                                    {{local_i4, 2 * local_j + 1}, witness});
-                            }
-                        }
-                        }
-                    }
-                }
-            }
-
-            // Run the constructive reductions on the actual residual CNF.
-            // If no reduction applies, use the cheap non-group Xiao search as
-            // an additional candidate for this affine class.
-            unsigned long long residual_key = 0;
-            bool cacheable_residual = true;
-            for (int assignment_mask : group_subst_masks)
-            {
-                if (assignment_mask < 0 || assignment_mask >= 64)
-                {
-                    cacheable_residual = false;
-                    break;
-                }
-                residual_key |= 1ULL << assignment_mask;
-            }
-
-            ResidualSearchSummary residual_summary;
-            auto cached_residual = cacheable_residual
-                                     ? residual_search_cache.find(residual_key)
-                                     : residual_search_cache.end();
-            if (cached_residual != residual_search_cache.end())
-            {
-                residual_summary = cached_residual->second;
-            }
-            else
-            {
-                ReductionFixpoint reduced_residual =
-                    reduce_to_fixpoint(*group_residual.cnf);
-                unique_ptr<CNF, void (*)(CNF *)> reduced_residual_guard(
-                    reduced_residual.cnf, destroy_cnf);
-
-                residual_summary.formula = group_residual.cnf->get_cert_snapshot();
-                if (reduced_residual.total_decrease > 0)
-                {
-                    residual_summary.decrease = reduced_residual.total_decrease;
-                    residual_summary.vec = {reduced_residual.total_decrease};
-                    residual_summary.factor = branching_factor(residual_summary.vec);
-                    residual_summary.rule = "residual_rr";
-                    for (const ReductionStep &step : reduced_residual.steps)
-                        residual_summary.rules.push_back(step.rule);
-                }
-                else
-                {
-                    ProofNode fast_residual =
-                        reduced_residual.cnf->xiao_branch(1, "");
-                    residual_summary.vec = fast_residual.vec;
-                    residual_summary.factor = fast_residual.tau;
-                    residual_summary.rule = "residual_xiao";
-                }
-
-                if (cacheable_residual)
-                    residual_search_cache[residual_key] = residual_summary;
-            }
-
-            bool residual_has_progress = false;
-            for (int value : residual_summary.vec)
-                residual_has_progress |= value > 0;
-            if (residual_has_progress)
+            for (const DirectLemmaResult &lemma :
+                 find_direct_lemma23_candidates(*group_residual.cnf))
             {
                 GroupWitness witness;
-                witness.rule = residual_summary.rule;
-                witness.residual_decrease = residual_summary.decrease;
-                witness.residual_vector = residual_summary.vec;
-                witness.residual_formula = residual_summary.formula;
-                    witness.residual_reduction_rules = residual_summary.rules;
-                witness.claimed_vector = residual_summary.vec;
-                extra_choices.push_back({residual_summary.vec, witness});
+                witness.rule = lemma.rule;
+                witness.lemma_var_id = lemma.pivot_id;
+                witness.second_lemma_var_id = lemma.second_pivot_id;
+                witness.lemma_local_D = lemma.local_D;
+                witness.lemma_pos_count = lemma.pos_count;
+                witness.lemma_neg_count = lemma.neg_count;
+                witness.claimed_vector = lemma.vec;
+                extra_choices.push_back({lemma.vec, witness});
             }
-
-            if (has_class)
+            // Statistics count clauses after representative substitutions,
+            // including deduplication of merged literals.
+            for (const auto &[id, stats] : analyze_formula(*group_residual.cnf))
             {
-                int basic_reduce =
-                    count_set_bits(gclauses) + count_set_bits(gnoclauses);
-                if (basic_reduce != group_residual.base_decrease)
+                int pos = stats.pos_count, neg = stats.neg_count;
+                if (pos < 2 || neg < 2) continue;
+                // Lemma 4: i >= j >= 2 and at least j-1 unit clauses
+                // on the i-occurrence side give the vector (i, 2j+1).
+                for (int direction = 0; direction < 2; ++direction)
                 {
-                    no_merge_config = true;
-                    break;
-                }
-
-                vector<pair<vector<int>, GroupWitness>> class_choices;
-
-                if (basic_reduce > 0)
-                {
+                    int j = direction == 0 ? neg : pos;
+                    int i = direction == 0 ? pos : neg;
+                    int units = direction == 0 ? stats.pos_unit_count : stats.neg_unit_count;
+                    if (i < j || units < j - 1) continue;
                     GroupWitness witness;
-                    witness.rule = "basic";
-                    witness.basic_reduce_val = basic_reduce;
-                    class_choices.push_back({{basic_reduce}, witness});
+                    witness.rule = "lemma4";
+                    witness.lemma_var_id = id;
+                    witness.lemma_local_D = j;
+                    witness.lemma_pos_count = pos;
+                    witness.lemma_neg_count = neg;
+                    witness.claimed_vector = {i, 2 * j + 1};
+                    extra_choices.push_back({witness.claimed_vector, witness});
                 }
-
-                for (auto choice : extra_choices)
-                {
-                    for (int &value : choice.first)
-                        value += basic_reduce;
-                    choice.second.basic_reduce_val = basic_reduce;
-                    class_choices.push_back(move(choice));
-                }
-
-                if (class_choices.empty())
-                {
-                    got_zero = true;
-                    break;
-                }
-
-                vector<GroupCombination> next_combinations;
-                set<vector<int>> seen_vectors;
-                for (const GroupCombination &partial : combinations)
-                {
-                    for (const auto &choice : class_choices)
-                    {
-                        GroupCombination next = partial;
-                        next.vec.insert(next.vec.end(), choice.first.begin(),
-                                        choice.first.end());
-                        next.witnesses.push_back(choice.second);
-                        vector<int> key = next.vec;
-                        sort(key.begin(), key.end(), greater<int>());
-                        if (seen_vectors.insert(key).second)
-                            next_combinations.push_back(move(next));
-                    }
-                }
-                combinations.swap(next_combinations);
             }
         }
 
-        if (got_zero || no_merge_config)
-        {
-            continue;
-        }
+        // Each group is analyzed once. Shared residual formulas still go through
+        // the formula cache, independent of their assignment images.
+        auto residual_proof = make_shared<ProofNode>(
+            analyze_residual(*group_residual.cnf, 1, q));
+        GroupWitness search_witness;
+        search_witness.rule = "residual_search";
+        search_witness.claimed_vector = residual_proof->vec;
+        search_witness.residual_proof = move(residual_proof);
+        extra_choices.push_back({search_witness.claimed_vector, move(search_witness)});
 
-        for (const GroupCombination &combination : combinations)
-        {
-            double now_factor = branching_factor(combination.vec);
-            if (now_factor < mn_factor)
+        int base = group_residual.base_decrease;
+        vector<int> best_vec;
+        GroupWitness best_witness;
+        long double best_weight = numeric_limits<long double>::infinity();
+        auto consider = [&](vector<int> vec, GroupWitness witness) {
+            for (int &value : vec) value += base;
+            if (vec.empty() || any_of(vec.begin(), vec.end(), [](int d) { return d <= 0; }))
+                return; // No admissible cover can use a nonprogressing leaf.
+            long double weight = branching_weight(vec, q);
+            if (weight < best_weight)
             {
-                mn_factor = now_factor;
-                mn_branch = combination.vec;
-                mn_partition = cs;
-                mn_witnesses = combination.witnesses;
+                best_weight = weight;
+                best_vec = move(vec);
+                witness.basic_reduce_val = base;
+                best_witness = move(witness);
             }
-        }
+        };
+        GroupWitness basic;
+        basic.rule = "basic";
+        consider({0}, basic);
+        for (auto &choice : extra_choices) consider(move(choice.first), move(choice.second));
+        if (best_vec.empty()) return;
+        candidates.push_back({group_subst_masks, move(best_vec), move(best_witness)});
+        weighted.push_back({move(coverage), best_weight});
+    });
 
-    } while (is_3_case ? get_next_3_partition_fast(cs, mask_of_reduced_subsets)
-                       : get_next_partition(cs, max_partitions));
-
-    ProofNode direct_child_search = this->xiao_branch(1, "");
-    if (mn_branch.empty())
+    GroupCover cover = minimum_group_cover(masks.size(), weighted, max_groups);
+    ProofNode direct_child_search = this->xiao_branch(1, "", q);
+    if (cover.groups.empty() || branching_weight(direct_child_search.vec, q) < cover.weight)
         return direct_child_search;
 
     ProofNode node;
-    node.type = "leaf";
-    node.vec = mn_branch;
-    node.tau = mn_factor;
-
-    // node.partition = mn_partition;
-
-    vector<int> full_partition(1 << k, -1);
-    for (int i = 0; i < rcnt; ++i)
-    {
-        full_partition[masks[i]] = mn_partition[i];
-    }
-    node.partition = full_partition;
-
-    node.formula_snapshot = this->get_cert_snapshot();
-    node.subsumptions = current_subsumptions;
-    node.group_witnesses = mn_witnesses;
-
-    // A split into the two affine classes v=0 and v=1 is exactly an ordinary
-    // branch on v followed by analysis of both child CNFs.  Subsumption may
-    // remove one row before the group enumerator sees that split, so retain
-    // the cheap depth-1 Xiao search as a baseline candidate for branch_group.
-    // This preserves the stronger subsumed partitions while recovering all
-    // variable splits with the shared child lemmas.
-    if (direct_child_search.tau < node.tau)
-        return direct_child_search;
-
-    if (!construct_proof)
-        return node;
-
-    node.type = "enumeration";
+    node.type = construct_proof ? "enumeration" : "leaf";
     node.branch_ids = ids;
-
-    // Re-materialize only the winning partition.  Candidate residuals above
-    // are intentionally short-lived; the certificate needs constructive
-    // children only for the selected proof.
-    int winning_max_class = -1;
-    for (int value : mn_partition) winning_max_class = max(winning_max_class, value);
-    size_t winning_witness_index = 0;
-    for (int c = 0; c <= winning_max_class; ++c)
+    node.formula_snapshot = this->get_cert_snapshot();
+    node.subsumptions = move(current_subsumptions);
+    // `partition` belongs to plain branching. Overlapping groups are recorded
+    // explicitly here and in each constructive alternative's represented_masks.
+    for (int index : cover.groups)
     {
-        vector<int> group_masks;
-        for (int i = 0; i < rcnt; ++i)
-            if (mn_partition[i] == c) group_masks.push_back(masks[i]);
-        if (group_masks.empty()) continue;
-
-        GroupResidual residual = materialize_group_residual(*this, ids, group_masks);
+        const Candidate &candidate = candidates[index];
+        node.cover_groups.push_back(candidate.rows);
+        node.vec.insert(node.vec.end(), candidate.vec.begin(), candidate.vec.end());
+        node.group_witnesses.push_back(candidate.witness);
+        if (!construct_proof) continue;
+        GroupResidual residual = materialize_group_residual(*this, ids, candidate.rows);
         if (!residual.valid)
         {
             if (residual.cnf) destroy_cnf(residual.cnf);
-            node.alternatives.clear();
-            break;
+            throw logic_error("winning cover contains an invalid substitution group");
         }
-
-        if (winning_witness_index >= mn_witnesses.size())
-        {
-            destroy_cnf(residual.cnf);
-            node.alternatives.clear();
-            break;
-        }
-        const GroupWitness &witness = mn_witnesses[winning_witness_index++];
+        unique_ptr<CNF, void (*)(CNF *)> residual_guard(residual.cnf, destroy_cnf);
+        const GroupWitness &witness = candidate.witness;
         ProofNode child;
         if (witness.rule == "basic")
         {
             child = ProofNode({0});
-            child.tau = 100.0;
             child.formula_snapshot = residual.cnf->get_cert_snapshot();
         }
-        else if (witness.rule == "residual_rr")
+        else if (witness.rule == "residual_search")
         {
-            // Rebuild the exact reduction chain named by the winning search.
-            CNF *current = new CNF(*residual.cnf);
-            vector<ProofNode> parents;
-            bool valid_chain = true;
-            for (const string &rule : witness.residual_reduction_rules)
-            {
-                ReductionStep step = apply_named_reduction(*current, rule);
-                if (!step.applied || !step.cnf)
-                {
-                    valid_chain = false;
-                    if (step.cnf) destroy_cnf(step.cnf);
-                    break;
-                }
-                ProofNode parent;
-                parent.type = "reduction";
-                parent.rule = rule;
-                parent.pivot_id = step.pivot_id;
-                parent.formula_snapshot = current->get_cert_snapshot();
-                parent.rr_witness_clauses = step.witness_clauses;
-                parents.push_back(move(parent));
-                destroy_cnf(current);
-                current = step.cnf;
-            }
-            child = ProofNode({0});
-            child.tau = 100.0;
-            child.formula_snapshot = current->get_cert_snapshot();
-            if (valid_chain)
-                for (auto it = parents.rbegin(); it != parents.rend(); ++it)
-                {
-                    it->children.push_back(move(child));
-                    child = move(*it);
-                }
-            else
-            {
-                child.type = "leaf";
-                child.rule = "residual_rr_reconstruction";
-                child.vec = witness.claimed_vector;
-                child.formula_snapshot = residual.cnf->get_cert_snapshot();
-            }
-            destroy_cnf(current);
-        }
-        else if (witness.rule == "residual_xiao")
-        {
-            child = residual.cnf->xiao_branch(1, "");
+            if (!witness.residual_proof ||
+                witness.residual_proof->formula_snapshot != residual.cnf->get_cert_snapshot())
+                throw logic_error("residual search proof does not match the winning group");
+            child = *witness.residual_proof;
         }
         else
         {
@@ -1427,17 +1012,33 @@ ProofNode CNF::branch_group(vector<int> ids, int max_partitions,
             child.tau = branching_factor(child.vec);
             child.formula_snapshot = residual.cnf->get_cert_snapshot();
         }
-
         ProofAlternative alternative;
         alternative.offset = count_set_bits(residual.common_satisfied_mask);
         alternative.decrease = residual.base_decrease;
-        alternative.represented_masks = group_masks;
+        alternative.represented_masks = candidate.rows;
         alternative.proof = make_shared<ProofNode>(move(child));
         node.alternatives.push_back(move(alternative));
-        destroy_cnf(residual.cnf);
     }
-
+    node.tau = branching_factor(node.vec);
     return node;
+}
+
+long double branching_weight(const vector<int> &a, double q)
+{
+    if (!std::isfinite(q) || q <= 1.0)
+        throw invalid_argument("branching target must be finite and greater than one");
+    if (a.empty()) return std::numeric_limits<long double>::infinity();
+    long double total = 0.0L;
+    for (int decrease : a)
+        total += powl((long double)q, -(long double)decrease);
+    return total;
+}
+
+bool meets_branching_target(const vector<int> &a, double q)
+{
+    // A call has weight one but does not establish a progressing strategy.
+    return !a.empty() && all_of(a.begin(), a.end(), [](int d) { return d > 0; }) &&
+           branching_weight(a, q) <= 1.0L;
 }
 
 double f_value(double x, const vector<int> &a)
@@ -1976,10 +1577,10 @@ add_new_var_in_place(CNF *cnf, string v_name,
 }
 
 // Функция возвращает пару {CNF_с_пустотой, CNF_с_непустотой(?+)}
-DivideResult empty_divide(CNF *cnf)
+DivideResult empty_divide(CNF *cnf, double q)
 {
     DivideResult best_split;
-    double min_worst_factor = std::numeric_limits<double>::infinity();
+    long double min_worst_weight = std::numeric_limits<long double>::infinity();
 
     vector<int> ids;
     for (auto p : ID2VAR)
@@ -1990,33 +1591,33 @@ DivideResult empty_divide(CNF *cnf)
         }
     }
 
-    auto best_tau = [&](CNF *candidate)
+    auto best_weight = [&](CNF *candidate)
     {
-        double result;
+        long double result;
         {
-            ProofNode node = candidate->xiao_branch(1, "x");
-            result = node.tau;
+            ProofNode node = candidate->xiao_branch(1, "x", q);
+            result = branching_weight(node.vec, q);
         }
         {
-            ProofNode node = candidate->branch_group(ids);
-            result = min(result, node.tau);
+            ProofNode node = candidate->branch_group(ids, -1, false, q);
+            result = min(result, branching_weight(node.vec, q));
         }
         return result;
     };
 
     auto best_proof = [&](CNF *candidate)
     {
-        double xiao_tau;
+        long double xiao_weight;
         {
-            ProofNode node = candidate->xiao_branch(1, "x");
-            xiao_tau = node.tau;
+            ProofNode node = candidate->xiao_branch(1, "x", q);
+            xiao_weight = branching_weight(node.vec, q);
         }
         {
-            ProofNode group_node = candidate->branch_group(ids);
-            if (group_node.tau <= xiao_tau)
-                return candidate->branch_group(ids, -1, true);
+            ProofNode group_node = candidate->branch_group(ids, -1, false, q);
+            if (branching_weight(group_node.vec, q) <= xiao_weight)
+                return candidate->branch_group(ids, -1, true, q);
         }
-        return candidate->xiao_branch(1, "x");
+        return candidate->xiao_branch(1, "x", q);
     };
 
     for (int i = 0; i < (int)cnf->clauses.size(); ++i)
@@ -2040,12 +1641,12 @@ DivideResult empty_divide(CNF *cnf)
                 nonempty = true;
 
             // Худший случай при данном разбиении
-            double worst_factor = max(best_tau(cnf_empty),
-                                      best_tau(cnf_not_empty));
+            long double worst_weight = max(best_weight(cnf_empty),
+                                           best_weight(cnf_not_empty));
 
-            if (worst_factor < min_worst_factor)
+            if (worst_weight < min_worst_weight)
             {
-                min_worst_factor = worst_factor;
+                min_worst_weight = worst_weight;
 
                 // Очищаем предыдущий лучший вариант
                 if (best_split.cnf_empty)

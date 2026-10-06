@@ -1,8 +1,10 @@
 #include "cnf.h"
+#include "strategy_cache.h"
 #include <algorithm>
 #include <map>
 #include <vector>
 #include <set>
+#include <limits>
 
 using namespace std;
 
@@ -68,14 +70,20 @@ pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool val_to_se
 //     return snap;
 // }
 
-ProofNode CNF::xiao_branch(int depth, std::string first_var)
+ProofNode CNF::xiao_branch(int depth, std::string first_var, double q)
+{
+    (void)first_var;
+    return cached_strategy_search(*this, StrategySearchKind::Variable, depth, q,
+                                  [&] { return xiao_branch_uncached(depth, q); });
+}
+
+ProofNode CNF::xiao_branch_uncached(int depth, double q)
 {
     // The search considers every actual pivot.  In particular, if a good
     // (3,2)-variable exists, it must be selected as that pivot; its bound
     // cannot be transferred to a different distinguished variable.
-    (void)first_var;
 
-    double granted = 100.0;
+    long double granted = std::numeric_limits<long double>::infinity();
     ProofNode granted_node({0});
     granted_node.tau = 100.0;
     granted_node.formula_snapshot = this->get_cert_snapshot();
@@ -91,7 +99,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
             // RR7 and RR9 preserve the number of clauses but eliminate a
             // variable.  Continue on the transformed formula instead of
             // returning the meaningless branching vector (0).
-            child_node = reduction.cnf->xiao_branch(depth, first_var);
+            child_node = reduction.cnf->xiao_branch(depth, "", q);
         }
         else
         {
@@ -124,10 +132,10 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
     // cutoff is essential: a depth-1 branch must see the lemma in its child.
     DirectLemmaResult direct_lemma;
     if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
-        direct_lemma = find_best_direct_lemma23(*this);
-    if (direct_lemma.applied && direct_lemma.tau < granted)
+        direct_lemma = find_best_direct_lemma23(*this, q);
+    if (direct_lemma.applied && branching_weight(direct_lemma.vec, q) < granted)
     {
-        granted = direct_lemma.tau;
+        granted = branching_weight(direct_lemma.vec, q);
         granted_node.vec = direct_lemma.vec;
         granted_node.tau = direct_lemma.tau;
         granted_node.rule = direct_lemma.rule;
@@ -148,12 +156,12 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
                 if (i >= j && j >= 2 && unit_count >= j - 1)
                 {
                     vector<int> step4_branch = {i, 2 * j + 1};
-                    double f = branching_factor(step4_branch);
+                    long double f = branching_weight(step4_branch, q);
                     if (f < granted)
                     {
                         granted = f;
                         granted_node.vec = step4_branch;
-                        granted_node.tau = f;
+                        granted_node.tau = branching_factor(granted_node.vec);
                         granted_node.rule = "lemma4";
                         granted_node.pivot_id = id;
                         granted_node.formula_snapshot = this->get_cert_snapshot();
@@ -184,12 +192,12 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
             if (has_positive_dominant_case || has_negative_dominant_case)
             {
                 vector<int> step51_branch = {4, 2};
-                double f = branching_factor(step51_branch);
+                long double f = branching_weight(step51_branch, q);
                 if (f < granted)
                 {
                     granted = f;
                     granted_node.vec = step51_branch;
-                    granted_node.tau = f;
+                    granted_node.tau = branching_factor(granted_node.vec);
                     granted_node.rule = "step5.1";
                     granted_node.pivot_id = id;
                     granted_node.formula_snapshot = this->get_cert_snapshot();
@@ -202,7 +210,7 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
 
     // --- Branching ---
     ProofNode best_node;
-    double min_tau = 1e18;
+    long double min_weight = std::numeric_limits<long double>::infinity();
     bool any_var_processed = false;
 
     for (auto const &[var_id, s] : stats)
@@ -222,56 +230,50 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var)
         };
         // Ветвь 1: x = 1
         auto [reduced_cnt1, new_cnf1] = apply_xiao_assignment(this, var_id, true);
-        ProofNode child1_res = new_cnf1->xiao_branch(depth - 1, "");
+        ProofNode child1_res = new_cnf1->xiao_branch(depth - 1, "", q);
         ProofNode stop1_res({0});
         stop1_res.formula_snapshot = new_cnf1->get_cert_snapshot();
 
         // Ветвь 2: x = 0
         auto [reduced_cnt0, new_cnf0] = apply_xiao_assignment(this, var_id, false);
-        ProofNode child0_res = new_cnf0->xiao_branch(depth - 1, "");
+        ProofNode child0_res = new_cnf0->xiao_branch(depth - 1, "", q);
         ProofNode stop0_res({0});
         stop0_res.formula_snapshot = new_cnf0->get_cert_snapshot();
 
-        ProofNode f_nodes[2] = {child1_res, stop1_res};
-        ProofNode s_nodes[2] = {child0_res, stop0_res};
-
-        for (int i = 0; i < 2; ++i)
+        // Contributions are additive at fixed q: each child independently
+        // chooses its continuation or a call (whose weight is one).
+        ProofNode selected1 = branching_weight(child1_res.vec, q) < 1.0L
+                                  ? child1_res : stop1_res;
+        ProofNode selected0 = branching_weight(child0_res.vec, q) < 1.0L
+                                  ? child0_res : stop0_res;
+        vector<int> current_branching;
+        for (int el : selected1.vec) current_branching.push_back(reduced_cnt1 + el);
+        for (int el : selected0.vec) current_branching.push_back(reduced_cnt0 + el);
+        long double current_weight = branching_weight(current_branching, q);
+        if (!any_var_processed || current_weight < min_weight)
         {
-            for (int j = 0; j < 2; ++j)
-            {
-                vector<int> current_branching;
-                for (int el : f_nodes[i].vec) current_branching.push_back(reduced_cnt1 + el);
-                for (int el : s_nodes[j].vec) current_branching.push_back(reduced_cnt0 + el);
-
-                double current_tau = branching_factor(current_branching);
-
-                if (!any_var_processed || current_tau < min_tau)
-                {
-                    min_tau = current_tau;
-                    any_var_processed = true;
-                    
-                    best_node.type = "branch";
-                    best_node.pivot_id = var_id;
-                    best_node.vec = current_branching;
-                    best_node.tau = current_tau;
-                    best_node.children = {f_nodes[i], s_nodes[j]};
-                    best_node.reduced_cnt_true = reduced_cnt1;
-                    best_node.reduced_cnt_false = reduced_cnt0;
-                    best_node.offset_true = assignment_offset(true);
-                    best_node.offset_false = assignment_offset(false);
-                }
-            }
+            min_weight = current_weight;
+            any_var_processed = true;
+            best_node.type = "branch";
+            best_node.pivot_id = var_id;
+            best_node.vec = move(current_branching);
+            best_node.tau = branching_factor(best_node.vec);
+            best_node.children = {move(selected1), move(selected0)};
+            best_node.reduced_cnt_true = reduced_cnt1;
+            best_node.reduced_cnt_false = reduced_cnt0;
+            best_node.offset_true = assignment_offset(true);
+            best_node.offset_false = assignment_offset(false);
         }
 
         destroy_cnf(new_cnf1);
         destroy_cnf(new_cnf0);
     }
 
-    if (!any_var_processed) return ProofNode({0});
+    if (!any_var_processed) return granted_node;
 
     std::sort(best_node.vec.begin(), best_node.vec.end(), std::greater<int>());
 
-    if (best_node.tau > granted) {
+    if (min_weight > granted) {
         return granted_node;
     }
 

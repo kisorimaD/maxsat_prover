@@ -17,3 +17,6 @@ void test_universal();
 void test_groups3_validity();
 void test_constructive_reductions();
 void test_safety();
+void test_weighted_search();
+void test_strategy_cache();
+void test_group_cover();

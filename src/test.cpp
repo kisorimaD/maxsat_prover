@@ -1,6 +1,8 @@
 #include "cnf.h"
 #include "test.h"
 #include "cert_logger.h"
+#include "strategy_cache.h"
+#include "group_cover.h"
 
 #include <algorithm>
 #include <assert.h>
@@ -10,6 +12,7 @@
 #include <functional>
 #include <stdexcept>
 #include <cmath>
+#include <random>
 
 using namespace std;
 
@@ -100,6 +103,362 @@ void delete_dummy_cnf(CNF* cnf) {
         delete c;
     }
     delete cnf;
+}
+
+void test_group_cover()
+{
+    // Compare direct image generation to the old independent validity test
+    // for every subset of the full assignment universe, up to four variables.
+    const int expected[] = {1, 3, 11, 49, 257};
+    for (int k = 0; k <= 4; ++k)
+    {
+        set<vector<int>> generated;
+        int visits = 0;
+        enumerate_substitution_groups(k, [&](const vector<int> &rows) {
+            ++visits;
+            assert(generated.insert(rows).second);
+        });
+        assert(visits == expected[k]);
+        if (k == 0) continue;
+        set<vector<int>> valid;
+        for (int subset = 1; subset < (1 << (1 << k)); ++subset)
+        {
+            vector<int> rows;
+            for (int row = 0; row < (1 << k); ++row)
+                if (subset & (1 << row)) rows.push_back(row);
+            string diag;
+            if (check_group_validity(rows, k, diag)) valid.insert(rows);
+        }
+        assert(generated == valid);
+    }
+
+    // Three required rows, two cheap overlapping pairs. Every disjoint
+    // partition needs a singleton and costs at least .35 + .5 = .85.
+    vector<WeightedGroup> overlapping = {
+        {{0, 1}, .35L}, {{0, 2}, .35L},
+        {{0}, .5L}, {{1}, .5L}, {{2}, .5L}};
+    GroupCover cover = minimum_group_cover(3, overlapping);
+    assert(cover.groups == vector<int>({0, 1}));
+    assert(fabsl(cover.weight - .7L) < 1e-15L);
+    assert(!isfinite(minimum_group_cover(3, overlapping, 1).weight));
+    assert(minimum_group_cover(0, {}).weight == 0);
+    assert(!isfinite(minimum_group_cover(3, {}).weight));
+    assert(!isfinite(minimum_group_cover(3, overlapping, 0).weight));
+
+    // Independent exhaustive oracle for the weighted-cover optimizer,
+    // including duplicate coverage, overlap and bounds on the group count.
+    mt19937 rng(1741);
+    for (int trial = 0; trial < 80; ++trial)
+    {
+        vector<WeightedGroup> candidates;
+        for (int i = 0; i < 8; ++i)
+        {
+            int image = 1 + rng() % 15;
+            vector<int> rows;
+            for (int row = 0; row < 4; ++row)
+                if (image & (1 << row)) rows.push_back(row);
+            candidates.push_back({rows, branching_weight({1 + int(rng() % 12)}, 1.2872)});
+        }
+        for (int limit : {-1, 1, 2, 3})
+        {
+            long double optimum = numeric_limits<long double>::infinity();
+            for (int subset = 1; subset < (1 << candidates.size()); ++subset)
+            {
+                int covered = 0, count = 0;
+                long double weight = 0;
+                for (int i = 0; i < (int)candidates.size(); ++i)
+                    if (subset & (1 << i))
+                    {
+                        ++count;
+                        weight += candidates[i].weight;
+                        for (int row : candidates[i].coverage) covered |= 1 << row;
+                    }
+                if (covered == 15 && (limit < 0 || count <= limit))
+                    optimum = min(optimum, weight);
+            }
+            GroupCover actual = minimum_group_cover(4, candidates, limit);
+            assert((!isfinite(optimum) && !isfinite(actual.weight)) ||
+                   fabsl(actual.weight - optimum) < 1e-12L);
+        }
+    }
+    // Actual CNF: overlap improves even over disjoint covers that are allowed
+    // to add dominated rows. All children are constructive, with no imports.
+    bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
+    int saved_width = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = -1;
+    const double q = 1.2872;
+    CNF *formula = create_dummy_cnf({
+        {2, 0}, {4}, {2, 3, 0}, {4, 0}, {-3},
+        {-2, 3, -4, 0}, {-4, 0}, {2}, {-2, -3, 0}, {-3, -4, 0}});
+    ProofNode proof = formula->branch_group({2, 3, 4}, -1, true, q);
+    assert(proof.vec == vector<int>({6, 8}));
+    assert(proof.cover_groups == vector<vector<int>>({{0, 1, 4, 5}, {5, 7}}));
+    assert(formula->branch_group({2, 3, 4}, -1, false, q).vec == proof.vec);
+    int required = 0;
+    for (int row = 0; row < 8; ++row)
+        if (!proof.subsumptions.count(row)) required |= 1 << row;
+    assert(required == ((1 << 1) | (1 << 4) | (1 << 5) | (1 << 7)));
+    vector<pair<int, long double>> costs;
+    enumerate_substitution_groups(3, [&](const vector<int> &rows) {
+        int coverage = 0;
+        for (int row : rows) coverage |= 1 << row;
+        coverage &= required;
+        if (!coverage) return;
+        GroupResidual residual = materialize_group_residual(*formula, {2, 3, 4}, rows);
+        assert(residual.valid);
+        ProofNode child = analyze_residual(*residual.cnf, 1, q);
+        for (int &d : child.vec) d += residual.base_decrease;
+        long double cost = branching_weight(child.vec, q);
+        if (residual.base_decrease > 0)
+            cost = min(cost, branching_weight({residual.base_decrease}, q));
+        costs.push_back({coverage, cost});
+        destroy_cnf(residual.cnf);
+    });
+    map<int, long double> disjoint_memo;
+    function<long double(int)> disjoint = [&](int remaining) -> long double {
+        if (!remaining) return 0;
+        if (disjoint_memo.count(remaining)) return disjoint_memo.at(remaining);
+        long double best = numeric_limits<long double>::infinity();
+        int first = remaining & -remaining;
+        for (const auto &[coverage, weight] : costs)
+            if ((coverage & first) && (coverage & remaining) == coverage)
+                best = min(best, weight + disjoint(remaining ^ coverage));
+        return disjoint_memo[remaining] = best;
+    };
+    assert(fabsl(disjoint(required) - branching_weight({6, 7}, q)) < 1e-12L);
+    assert(branching_weight(proof.vec, q) < disjoint(required));
+
+    // Independently check the semantic identity at every tail valuation,
+    // including the overlapping row and all additional dominated rows.
+    map<int, int> tail_index;
+    for (const auto &clause : proof.formula_snapshot)
+        for (int literal : clause)
+            if (literal >= SNAP_TAIL_ANY_BASE && !tail_index.count(literal))
+                tail_index.emplace(literal, tail_index.size());
+    auto optimum = [&](const vector<vector<int>> &snapshot, int boundary) {
+        int best = 0;
+        for (int assignment = 0; assignment < 8; ++assignment)
+        {
+            int score = 0;
+            for (const auto &clause : snapshot)
+            {
+                bool satisfied = false;
+                for (int literal : clause)
+                {
+                    if (literal >= SNAP_TAIL_ANY_BASE)
+                        satisfied |= (boundary >> tail_index.at(literal)) & 1;
+                    else
+                        satisfied |= bool((assignment >> (abs(literal) - 2)) & 1) == (literal > 0);
+                }
+                score += satisfied;
+            }
+            best = max(best, score);
+        }
+        return best;
+    };
+    for (int boundary = 0; boundary < (1 << tail_index.size()); ++boundary)
+    {
+        int children_best = 0;
+        for (size_t i = 0; i < proof.alternatives.size(); ++i)
+        {
+            const auto &alternative = proof.alternatives[i];
+            assert(alternative.represented_masks == proof.cover_groups[i]);
+            assert(alternative.decrease == int(proof.formula_snapshot.size()) -
+                   int(alternative.proof->formula_snapshot.size()));
+            children_best = max(children_best, alternative.offset +
+                optimum(alternative.proof->formula_snapshot, boundary));
+        }
+        assert(optimum(proof.formula_snapshot, boundary) == children_best);
+    }
+    delete_dummy_cnf(formula);
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved_assumptions;
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = saved_width;
+    // Four selected variables, all 16 assignments undominated. This used to
+    // require enumerating partitions of a 16-element set.
+    vector<vector<int>> four_snapshot;
+    for (int var = 2; var <= 5; ++var)
+        for (int copy = 0; copy < 2; ++copy)
+        {
+            four_snapshot.push_back({var, 0});
+            four_snapshot.push_back({-var, 0});
+        }
+    CNF *four = create_dummy_cnf(four_snapshot);
+    ProofNode four_proof = four->branch_group({2, 3, 4, 5}, -1, true, q);
+    assert(four_proof.subsumptions.empty());
+    assert(four->branch_group({2, 3, 4, 5}, -1, false, q).vec == four_proof.vec);
+    delete_dummy_cnf(four);
+    cout << "Substitution groups and exact weighted cover tests passed\n";
+}
+
+void test_strategy_cache()
+{
+    const double q = 1.2872;
+    bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
+    int saved_width = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = -1;
+    set_strategy_cache_enabled(true);
+    CNF *first = create_dummy_cnf({{2, 0}, {-2, 0}});
+    CNF *renamed = create_dummy_cnf({{2, 0}, {-2, 0}});
+    ProofNode original = first->xiao_branch(1, "", q);
+    assert(strategy_cache_stats().misses == 1);
+    ProofNode hit = renamed->xiao_branch(1, "", q);
+    assert(strategy_cache_stats().hits == 1);
+    assert(hit.formula_snapshot == renamed->get_cert_snapshot());
+    assert(hit.formula_snapshot != original.formula_snapshot);
+    assert(hit.vec == original.vec);
+    assert(hit.children.size() == 1 && hit.children[0].formula_snapshot.size() == 1);
+    std::set<int> current_tails;
+    for (const auto &clause : renamed->get_cert_snapshot())
+        for (int literal : clause)
+            if (literal >= SNAP_TAIL_ANY_BASE) current_tails.insert(literal);
+    for (int literal : hit.children[0].formula_snapshot[0])
+        assert(current_tails.count(literal));
+    hit.children[0].formula_snapshot.clear();
+    assert(!renamed->xiao_branch(1, "", q).children[0].formula_snapshot.empty());
+
+    auto misses = strategy_cache_stats().misses;
+    renamed->xiao_branch(1, "", 1.5);
+    renamed->xiao_branch(2, "", q);
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
+    renamed->xiao_branch(1, "", q);
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = 3;
+    renamed->xiao_branch(1, "", q);
+    assert(strategy_cache_stats().misses == misses + 4);
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = -1;
+
+    // Tail type, sharing, and clause order are part of the key.
+    CNF *typed = new CNF(*first);
+    typed->clauses[0]->lits.erase(&UNKNOWN_LITERAL);
+    typed->clauses[0]->lits.insert(&UNKNOWN_NOT_EMPTY_LITERAL);
+    typed->clauses[0]->tail_atoms.begin()->second = true;
+    CNF *shared = new CNF(*first);
+    shared->clauses[1]->tail_atoms = shared->clauses[0]->tail_atoms;
+    CNF *reordered = new CNF(*first);
+    reverse(reordered->clauses.begin(), reordered->clauses.end());
+    misses = strategy_cache_stats().misses;
+    typed->xiao_branch(1, "", q);
+    shared->xiao_branch(1, "", q);
+    reordered->xiao_branch(1, "", q);
+    assert(strategy_cache_stats().misses == misses + 3);
+    destroy_cnf(typed);
+    destroy_cnf(shared);
+    destroy_cnf(reordered);
+    delete_dummy_cnf(first);
+    delete_dummy_cnf(renamed);
+
+    // Group residual processing has its own search policy. Check a full RR
+    // chain and that its cached proof is identical to uncached processing.
+    CNF *cascade = create_dummy_cnf({{2, 3}, {-2, 3}, {-3, 0}});
+    set_strategy_cache_enabled(false);
+    ProofNode uncached = analyze_residual(*cascade, 1, q);
+    set_strategy_cache_enabled(true);
+    ProofNode cached = analyze_residual(*cascade, 1, q);
+    ProofNode repeated = analyze_residual(*cascade, 1, q);
+    assert(strategy_cache_stats().hits == 1);
+    assert(cached.vec == uncached.vec && repeated.vec == uncached.vec);
+    assert(cached.formula_snapshot == cascade->get_cert_snapshot());
+    assert(cached.rule == "RR2" && cached.children[0].rule == "RR2");
+    assert(cached.children[0].children[0].formula_snapshot ==
+           uncached.children[0].children[0].formula_snapshot);
+    delete_dummy_cnf(cascade);
+
+    CNF *group_input = create_dummy_cnf({
+        {0, 2, 3}, {0, 2, 4}, {0, 2}, {0, -2, 3}, {0, -2, 4},
+        {0, 3}, {0, 3}, {-3}, {0, -4}, {0, -4}});
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
+    set_strategy_cache_enabled(false);
+    ProofNode without_cache = group_input->branch_group({2, 3, 4}, -1, true, q);
+    set_strategy_cache_enabled(true);
+    ProofNode with_cache = group_input->branch_group({2, 3, 4}, -1, true, q);
+    function<bool(const ProofNode &, const ProofNode &)> same_proof;
+    same_proof = [&](const ProofNode &a, const ProofNode &b) {
+        if (a.type != b.type || a.rule != b.rule || a.pivot_id != b.pivot_id ||
+            a.vec != b.vec || a.formula_snapshot != b.formula_snapshot ||
+            a.cover_groups != b.cover_groups ||
+            a.reduced_cnt_true != b.reduced_cnt_true || a.reduced_cnt_false != b.reduced_cnt_false ||
+            a.offset_true != b.offset_true || a.offset_false != b.offset_false ||
+            a.children.size() != b.children.size() || a.alternatives.size() != b.alternatives.size())
+            return false;
+        for (size_t i = 0; i < a.children.size(); ++i)
+            if (!same_proof(a.children[i], b.children[i])) return false;
+        for (size_t i = 0; i < a.alternatives.size(); ++i)
+        {
+            const auto &left = a.alternatives[i], &right = b.alternatives[i];
+            if (left.offset != right.offset || left.decrease != right.decrease ||
+                left.represented_masks != right.represented_masks ||
+                bool(left.proof) != bool(right.proof)) return false;
+            if (left.proof && !same_proof(*left.proof, *right.proof)) return false;
+        }
+        return true;
+    };
+    assert(same_proof(without_cache, with_cache));
+    assert(same_proof(with_cache, group_input->branch_group({2, 3, 4}, -1, true, q)));
+    assert(strategy_cache_stats().hits > 0);
+    delete_dummy_cnf(group_input);
+
+    clear_strategy_cache();
+    for (int i = 0; i < 2100; ++i)
+    {
+        CNF formula;
+        formula.clauses.push_back(new Clause(vector<Literal *>{intern_literal(100 + i, false)}));
+        cached_strategy_search(formula, StrategySearchKind::Variable, 0, q, [&] {
+            ProofNode call({0});
+            call.formula_snapshot = formula.get_cert_snapshot();
+            return call;
+        });
+        delete formula.clauses[0];
+    }
+    assert(strategy_cache_stats().entries <= 2048);
+    assert(strategy_cache_stats().evictions > 0);
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved_assumptions;
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = saved_width;
+    clear_strategy_cache();
+    cout << "Residual strategy cache tests passed\n";
+}
+
+void test_weighted_search()
+{
+    const double q = 1.2872;
+    assert(branching_factor({1, 8}) < branching_factor({2, 5}));
+    assert(branching_weight({2, 5}, q) < branching_weight({1, 8}, q));
+    assert(branching_weight({0}, q) == 1.0L);
+    assert(!meets_branching_target({0}, q));
+    assert(!meets_branching_target({0, 8}, q));
+    assert(!meets_branching_target({}, q));
+    assert(meets_branching_target({1, 1}, 2.0));
+    assert(!meets_branching_target({1, 1}, 1.9));
+    bool rejected = false;
+    try { branching_weight({1}, 1.0); }
+    catch (const invalid_argument &) { rejected = true; }
+    assert(rejected);
+
+    // Both lemmas apply without an intervening RR.  Their cost curves cross:
+    // the chosen root strategy must change when the target changes.
+    CNF *input = create_dummy_cnf({
+        {2, 0}, {2, 0}, {-2, 0},
+        {3}, {3, 0}, {-3, 0}, {-3, 0}});
+    bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
+    ProofNode low = input->xiao_branch(0, "", 1.233);
+    ProofNode high = input->xiao_branch(0, "", q);
+    assert(low.rule == "lemma3" && low.vec == vector<int>({1, 8}));
+    assert(high.rule == "lemma4" && high.vec == vector<int>({2, 5}));
+    // Repeated changes of q must not reuse a previous target's choice.
+    assert(input->xiao_branch(0, "", 1.233).vec == low.vec);
+    for (double target : {1.233, q, 1.5})
+    {
+        ProofNode variable = input->xiao_branch(1, "", target);
+        ProofNode group = input->branch_group({2, 3}, -1, false, target);
+        ProofNode proof = input->branch_group({2, 3}, -1, true, target);
+        assert(branching_weight(group.vec, target) <= branching_weight(variable.vec, target));
+        assert(group.vec == proof.vec);
+    }
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved_assumptions;
+    delete_dummy_cnf(input);
+    cout << "Fixed-target weighted search tests passed\n";
 }
 
 void test_basics()
@@ -247,7 +606,7 @@ void test_constructive_reductions()
     assert(step53_xiao.vec == expected_step53);
     assert(step53_xiao.tau < 1.28855);
     ProofNode step53_group = step53_input->branch_group({2, 3, 4});
-    assert(step53_group.tau <= step53_xiao.tau + 1e-12);
+    assert(branching_weight(step53_group.vec, 1.2873) <= branching_weight(step53_xiao.vec, 1.2873));
     delete_dummy_cnf(step53_input);
 
     auto check_step55 = [&](const vector<vector<int>> &formula)
@@ -258,7 +617,7 @@ void test_constructive_reductions()
         assert(xiao.vec == expected);
         assert(xiao.tau < 1.28855);
         ProofNode grouped = input->branch_group({2, 3, 4});
-        assert(grouped.tau <= xiao.tau + 1e-12);
+        assert(branching_weight(grouped.vec, 1.2873) <= branching_weight(xiao.vec, 1.2873));
         delete_dummy_cnf(input);
     };
 
@@ -511,7 +870,7 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         CNF *cnf = variants[i];
         ProofNode naive_node = cnf->branch(ids); // Используем ProofNode
 
-        if (naive_node.tau >= C)
+        if (!meets_branching_target(naive_node.vec, C))
         {  
             filtered_variants.push_back(cnf);
         }
@@ -533,9 +892,9 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         for (int i = 0; i < variants.size(); ++i)
         {
             CNF *cnf = variants[i];
-            ProofNode rr_node = cnf->xiao_branch(xiao_depth);
+            ProofNode rr_node = cnf->xiao_branch(xiao_depth, "", C);
 
-            if (rr_node.tau >= C) {
+            if (!meets_branching_target(rr_node.vec, C)) {
                 filtered_variants.push_back(cnf);
             }
             else
@@ -579,30 +938,13 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
     for (int i = 0; i < variants.size(); ++i)
     {
         CNF *cnf = variants[i];
-        bool flag = false;
-        
-        for (int k = 2; k <= ids.size(); ++k) {
-            ProofNode approx_node = cnf->branch_group(ids, k);
-            if (approx_node.tau < C) {
-                approx_node = cnf->branch_group(ids, k, true);
-                global_logger.log_proof_tree(cnf->node_id, approx_node);
-        
-                flag = true;
-                break;
-            }
-        }
-
-        if (!flag) {
-            ProofNode full_group_node = cnf->branch_group(ids, -1);
-            if (full_group_node.tau >= C) {
-                filtered_variants.push_back(cnf);
-            }
-            else
-            {
-                full_group_node = cnf->branch_group(ids, -1, true);
-                global_logger.log_proof_tree(cnf->node_id, full_group_node);
-            }
-        }
+        // Analyze the groups once and solve one unrestricted weighted cover.
+        // Constructive residual proofs are already retained by group analysis.
+        ProofNode group_node = cnf->branch_group(ids, -1, true, C);
+        if (!meets_branching_target(group_node.vec, C))
+            filtered_variants.push_back(cnf);
+        else
+            global_logger.log_proof_tree(cnf->node_id, group_node);
 
         if (need_pb)
             progress_counter_test++;
@@ -637,6 +979,7 @@ void print_help_universal()
     cout << "   head [n]                                \t\tВывести [n] первых вариантов сейчас\n";
     cout << "   print [i]                               \t\tВывести [i] вариант и разобрать по переменным\n";
     cout << "   stats                                   \t\tВывести минимум и максимум branching factor среди оставшихся вариантов\n";
+    cout << "   cache_stats                             \t\tСтатистика кеша остаточных формул\n";
     cout << "   factor [vector]                         \t\tВывести branching factor для заданного вектора\n";
     cout << "   setposfunc [need_names] [no_names]      \t\tЗафиксировать позиционную функцию, которая будет выводиться в print\n";
     cout << "   empty_divide [i]                        \t\tПрименить empty_divide к [i] формуле (или ко всем, если i = -1)\n";
@@ -1064,8 +1407,8 @@ void test_universal()
             cout << endl;
 
             ProofNode reg_node = cur.at(i)->branch(ids);
-            ProofNode group_node = cur.at(i)->branch_group(ids);
-            ProofNode xiao_node = cur.at(i)->xiao_branch(1);
+            ProofNode group_node = cur.at(i)->branch_group(ids, -1, false, C);
+            ProofNode xiao_node = cur.at(i)->xiao_branch(1, "", C);
 
             vector<int> reg_branch = reg_node.vec;
             vector<int> group_branch = group_node.vec;
@@ -1105,8 +1448,8 @@ void test_universal()
                 cout << endl;
 
                 ProofNode reg_node = cur.at(i)->branch(ids);
-                ProofNode group_node = cur.at(i)->branch_group(ids);
-                ProofNode xiao_node = cur.at(i)->xiao_branch(1);
+                ProofNode group_node = cur.at(i)->branch_group(ids, -1, false, C);
+                ProofNode xiao_node = cur.at(i)->xiao_branch(1, "", C);
 
                 vector<int> reg_branch = reg_node.vec;
                 vector<int> group_branch = group_node.vec;
@@ -1134,11 +1477,11 @@ void test_universal()
 
         if (command == "printworst")
         {
-            double worst = -1;
+            long double worst = -1;
             int worst_ind = -1;
             for (int i = 0; i < cur.size(); ++i)
             {
-                double gfactor = cur.at(i)->branch_group(ids).tau;
+                long double gfactor = branching_weight(cur.at(i)->branch_group(ids, -1, false, C).vec, C);
                 
                 if (gfactor > worst)
                 {
@@ -1148,7 +1491,7 @@ void test_universal()
             }
 
             cout << "Formula: " << worst_ind << '\n';
-            cout << "| " << worst << "\n\n";
+            cout << "| W_q = " << worst << "\n\n";
 
             continue;
         }
@@ -1169,11 +1512,12 @@ void test_universal()
 
             for (CNF *cnf : cur)
             {
-                double gfactor = cnf->branch_group(ids).tau;
-                double xfactor = cnf->xiao_branch(1).tau;
 
                 // Берем минимум между групповым ветвлением и ветвлением xiao
-                double current_bf = min(gfactor, xfactor);
+                ProofNode grouped = cnf->branch_group(ids, -1, false, C);
+                ProofNode xiao = cnf->xiao_branch(1, "", C);
+                double current_bf = branching_weight(grouped.vec, C) < branching_weight(xiao.vec, C)
+                                        ? grouped.tau : xiao.tau;
 
                 min_bf = min(min_bf, current_bf);
                 max_bf = max(max_bf, current_bf);
@@ -1183,6 +1527,16 @@ void test_universal()
             cout << "Минимальный Branching Factor:  " << min_bf << "\n";
             cout << "Максимальный Branching Factor: " << max_bf << "\n\n";
 
+            continue;
+        }
+
+        if (command == "cache_stats")
+        {
+            auto stats = strategy_cache_stats();
+            cout << "Strategy cache: hits=" << stats.hits
+                 << ", misses=" << stats.misses
+                 << ", entries=" << stats.entries
+                 << ", evictions=" << stats.evictions << "\n\n";
             continue;
         }
 
@@ -1198,7 +1552,7 @@ void test_universal()
                 
                 for (CNF *cnf : cur)
                 {
-                    DivideResult res = empty_divide(cnf);
+                    DivideResult res = empty_divide(cnf, C);
                     if (res.cnf_empty != nullptr)
                     {
                         owner.adopt({res.cnf_empty, res.cnf_not_empty});

@@ -17,6 +17,8 @@ extern map<string, int> VAR2ID;
 extern int ID_COUNTER;
 
 double branching_factor(const vector<int> &a, double tol = 1e-12);
+long double branching_weight(const vector<int> &a, double q);
+bool meets_branching_target(const vector<int> &a, double q);
 
 struct MaxSATSettingsType
 {
@@ -27,6 +29,8 @@ struct MaxSATSettingsType
 };
 
 extern MaxSATSettingsType MaxSATSettings;
+
+struct ProofNode;
 
 struct GroupWitness {
     std::string rule;            // "basic", "lemma2", "lemma3", "double_lemma3", "lemma4"
@@ -41,11 +45,8 @@ struct GroupWitness {
     int lemma_neg_count = -1;
 
     // Constructive processing of the materialized residual formula.
-    int residual_decrease = 0;
-    vector<int> residual_vector;
     vector<int> claimed_vector;
-    vector<string> residual_reduction_rules;
-    vector<vector<int>> residual_formula;
+    std::shared_ptr<const ProofNode> residual_proof;
 };
 
 struct ProofAlternative;
@@ -60,6 +61,7 @@ struct ProofNode {
     int target_clause_idx = -1; // Для узла empty_divide
     std::vector<int> branch_ids;
     std::vector<int> partition;
+    std::vector<std::vector<int>> cover_groups; // grouped branching may overlap
     std::vector<std::vector<int>> formula_snapshot; 
     
     std::vector<ProofNode> children;
@@ -209,18 +211,20 @@ public:
 
     ProofNode branch(vector<int> ids);
 
-    ProofNode branch_group(vector<int> ids, int max_partitions = -1,
-                           bool construct_proof = false);
+    ProofNode branch_group(vector<int> ids, int max_groups = -1,
+                           bool construct_proof = false, double q = 1.2873);
 
-    ProofNode xiao_branch(int depth, string first_var = "x");
+    ProofNode xiao_branch(int depth, string first_var = "x", double q = 1.2873);
 
     std::vector<std::vector<int>> get_snapshot();
-    std::vector<std::vector<int>> get_cert_snapshot();
+    std::vector<std::vector<int>> get_cert_snapshot() const;
 
     long long node_id;
 
     vector<Clause *> clauses;
 
+private:
+    ProofNode xiao_branch_uncached(int depth, double q);
 };
 
 struct GroupResidual
@@ -242,6 +246,7 @@ struct ReductionStep
     int decrease = 0;
     vector<int> witness_clauses;
     CNF *cnf = nullptr;
+    vector<vector<int>> formula_snapshot;
 };
 
 struct ReductionFixpoint
@@ -274,7 +279,7 @@ Literal *intern_literal(int id, bool inv);
 ReductionStep apply_first_reduction(const CNF &cnf);
 ReductionStep apply_named_reduction(const CNF &cnf, const string &rule);
 ReductionFixpoint reduce_to_fixpoint(const CNF &cnf);
-DirectLemmaResult find_best_direct_lemma23(const CNF &cnf);
+DirectLemmaResult find_best_direct_lemma23(const CNF &cnf, double q = 1.2873);
 vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf);
 
 struct DivideResult {
@@ -290,7 +295,7 @@ struct DivideResult {
 vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type); //,const std::function<bool(int, bool, bool, Clause*)>& condition_func = [](int, bool, bool, Clause*){ return true; });
 vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector<LiteralDegType> variants = POSSIBLE_LITERALS);
 
-DivideResult empty_divide(CNF* cnf);
+DivideResult empty_divide(CNF* cnf, double q = 1.2873);
 
 bool is_A_subset_of_B(int A, int B);
 bool check_group_validity(const vector<int>& group_masks, int k, string& diag);
