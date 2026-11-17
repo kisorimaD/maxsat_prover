@@ -1,4 +1,6 @@
 #include "strategy_cache.h"
+#include "lemmas.h"
+#include "xiao_property2.h"
 
 #include <cmath>
 #include <deque>
@@ -107,6 +109,12 @@ ProofNode cached_strategy_search(const CNF &formula, StrategySearchKind kind,
     append(key, q);
     append(key, MaxSATSettings.MAXIMUM_CLAUSE_SIZE);
     append(key, MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS);
+    append(key, MaxSATSettings.ALLOW_LEMMA3_SPLIT);
+    append(key, MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT);
+    append(key, MaxSATSettings.ALLOW_XIAO_PROPERTY2);
+    append(key, MaxSATSettings.ALLOW_XIAO_PROPERTY1);
+    append(key, MaxSATSettings.ALLOW_POLYNOMIAL_RESTARTS);
+    append(key, saved_lemma_policy_revision());
     std::map<int, int> to_canonical, from_canonical;
     auto snapshot = formula.get_cert_snapshot();
     append(key, snapshot.size());
@@ -126,6 +134,15 @@ ProofNode cached_strategy_search(const CNF &formula, StrategySearchKind kind,
                 int base = literal >= SNAP_TAIL_NONEMPTY_BASE
                                ? SNAP_TAIL_NONEMPTY_BASE : SNAP_TAIL_ANY_BASE;
                 int tail = literal - base;
+                if (MaxSATSettings.ALLOW_XIAO_PROPERTY1)
+                {
+                    auto it = formula.tail_exclusions.find(tail);
+                    size_t size = it == formula.tail_exclusions.end() ? 0 : it->second.size();
+                    append(key, size);
+                    if (it != formula.tail_exclusions.end())
+                        for (const auto &d : it->second)
+                            for (int value : d) append(key, value);
+                }
                 if (!to_canonical.count(tail))
                 {
                     int canonical = static_cast<int>(to_canonical.size());
@@ -166,7 +183,23 @@ ProofNode cached_strategy_search(const CNF &formula, StrategySearchKind kind,
 ProofNode analyze_residual(const CNF &formula, int depth, double q)
 {
     return cached_strategy_search(formula, StrategySearchKind::Residual, depth, q, [&] {
+        DisableXiaoProperty2 no_step6_premise_for_group_residual;
+        ProofNode restart;
+        if (MaxSATSettings.ALLOW_POLYNOMIAL_RESTARTS) {
+            auto step=apply_first_reduction(formula);
+            if (step.applied) {
+                restart=polynomial_restart(formula,step);
+                destroy_cnf(step.cnf);
+            }
+        }
         ReductionFixpoint reduced = reduce_to_fixpoint(formula);
+        struct BoundaryDegreeScope {
+            bool previous = MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT;
+            ~BoundaryDegreeScope() { MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT = previous; }
+        } scope;
+        for (const auto &step : reduced.steps)
+            if (step.rule == "RR10" || step.rule == "RR11")
+                MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT = true;
         std::unique_ptr<CNF, decltype(&destroy_cnf)> owner(reduced.cnf, destroy_cnf);
         ProofNode child({0});
         child.formula_snapshot = reduced.cnf->get_cert_snapshot();
@@ -186,6 +219,7 @@ ProofNode analyze_residual(const CNF &formula, int depth, double q)
             parent.children.push_back(std::move(child));
             child = std::move(parent);
         }
+        if (restart.type=="restart" && branching_weight(child.vec,q)>=1.0L) return restart;
         return child;
     });
 }

@@ -20,3 +20,6 @@ void test_safety();
 void test_weighted_search();
 void test_strategy_cache();
 void test_group_cover();
+void test_compensated_absorption();
+void test_proved_lemmas();
+void test_saved_lemmas();

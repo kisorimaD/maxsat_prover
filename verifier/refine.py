@@ -1,4 +1,4 @@
-from itertools import product
+from itertools import combinations
 
 from .formula import (is_tail, normalize_formula, ordered_formula,
                       replace_tail, tail_ids, variables, canonical_formula)
@@ -17,6 +17,34 @@ def validate_degree(positive, negative, singleton, legacy=False):
         raise ValueError("invalid exposure degrees")
     if singleton and negative != 1 and not legacy:
         raise ValueError("singleton requires negative degree 1")
+
+
+def degree_is_covered(degree, family):
+    positive, negative, singleton = degree
+    return any(positive == p and negative == n and (not s or singleton)
+               for p, n, s in family)
+
+
+def checked_degree_scope(scope):
+    if not isinstance(scope, list) or not scope:
+        raise ValueError("lemma degree scope must be a nonempty degree family")
+    for degree in scope:
+        if not isinstance(degree, list) or len(degree) != 3:
+            raise ValueError("invalid lemma degree scope")
+        validate_degree(*degree)
+    return scope
+
+
+def binding_degrees_covered(expression, parent, scope):
+    for literal in expression:
+        if type(literal) is not int:
+            continue
+        positive = sum(literal in clause for clause in parent)
+        negative = sum(-literal in clause for clause in parent)
+        singleton = negative == 1 and (-literal,) in parent
+        if not degree_is_covered((positive, negative, singleton), scope):
+            return False
+    return True
 
 
 def validate_exposure_formula(formula, variable):
@@ -57,35 +85,46 @@ def _build_formula(formula, roles, variable, positive, negative, singleton):
 
 
 def generate_exposure(formula, variable, positive, negative, singleton,
-                      required_clause=None, legacy=False):
+                      required_clause=None, legacy=False, exclusions=None):
     validate_degree(positive, negative, singleton, legacy)
     validate_exposure_formula(formula, variable)
     wildcard_indices = [index for index, clause in enumerate(formula)
                         if any(is_tail(literal) for literal in clause)]
     generated = set()
-    for choices in product((1, -1, 0), repeat=len(wildcard_indices)):
-        roles = [0] * len(formula)
-        for index, role in zip(wildcard_indices, choices):
-            roles[index] = role
-        if required_clause is not None and roles[required_clause] != 1:
-            continue
-        placed_positive = roles.count(1)
-        placed_negative = roles.count(-1)
-        if placed_positive > positive or placed_negative > negative:
-            continue
-        if singleton and placed_negative:
-            continue
-        generated.add(_build_formula(formula, roles, variable,
-                                     positive, negative, singleton))
+    # Enumerate only placements within the declared degrees. Scanning all
+    # 3^number_of_tails role vectors discarded almost everything at depth 5.
+    required = () if required_clause is None else (required_clause,)
+    if required_clause is not None and required_clause not in wildcard_indices:
+        return generated
+    available = [i for i in wildcard_indices if i not in required]
+    for count_positive in range(min(positive - len(required), len(available)) + 1):
+        for chosen_positive in combinations(available, count_positive):
+            positives = set(required + chosen_positive)
+            remaining = [i for i in available if i not in positives]
+            max_negative = 0 if singleton else min(negative, len(remaining))
+            for count_negative in range(max_negative + 1):
+                for chosen_negative in combinations(remaining, count_negative):
+                    roles = [0] * len(formula)
+                    for i in positives: roles[i] = 1
+                    for i in chosen_negative: roles[i] = -1
+                    child = _build_formula(formula, roles, variable, positive, negative, singleton)
+                    if exclusions:
+                        from .typed_tails import restrict_exposure
+                        child = restrict_exposure(child, variable, positive, negative, exclusions)
+                    if child is not None: generated.add(child)
     return generated
 
 
-def expected_children(node, legacy=False):
+def expected_children(node, legacy=False, exclusions=None):
     # Clause indices in refine records refer to the producer's original
     # sequence, so validate here but do not sort before applying the split.
     normalize_formula(node["formula"])
     formula = ordered_formula(node["formula"])
     rule = node["rule"]
+    if rule == "expose_type_at_clause":
+        from .typed_tails import expected_states, read_exclusions
+        return {f for f, _ in expected_states(node, exclusions if exclusions is not None
+                                             else read_exclusions(node), legacy=legacy)}
     if rule == "tail_empty_or_nonempty":
         clause = node["clause"]
         return {replace_tail(formula, clause, None),
@@ -108,7 +147,7 @@ def expected_children(node, legacy=False):
         for positive, negative, singleton in degrees:
             result.update(generate_exposure(formula, node["variable"],
                                             positive, negative, singleton,
-                                            index, legacy=legacy))
+                                            index, legacy=legacy, exclusions=exclusions))
         return result
     raise ValueError(f"unknown refine rule {rule!r}")
 

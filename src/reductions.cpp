@@ -514,6 +514,74 @@ ReductionStep apply_rr9(const CNF &cnf,
     }
     return {};
 }
+// Chen--Xu--Wang 2017 R-Rule 7 / Xu 2019 R-Rule 16.
+// Each incident clause has a literal whose complement occurs once outside
+// the block. This explicit guard makes the exchange proof independent of
+// the paper's preceding reduction rules (and supports non-singletons).
+ReductionStep apply_rr10(const CNF &cnf, const map<int, FormulaVarStats> &stats)
+{
+    for (const auto &[pivot, s] : stats)
+    {
+        if (s.pos_count != 2 || s.neg_count != 2) continue;
+        set<int> block(s.pos_indices.begin(), s.pos_indices.end());
+        block.insert(s.neg_indices.begin(), s.neg_indices.end());
+        if (block.size() != 4) continue;
+        bool valid = true;
+        for (int index : block)
+        {
+            bool witness = false;
+            for (auto *lit : cnf.clauses[index]->lits)
+            {
+                if (is_any_unknown_literal(lit) || lit->id == pivot) continue;
+                const auto &t = stats.at(lit->id);
+                const auto &opposite = lit->inv ? t.pos_indices : t.neg_indices;
+                if (opposite.size() == 1 && !block.count(opposite[0])) witness = true;
+            }
+            valid &= witness;
+        }
+        if (!valid) continue;
+        CNF *result = copy_without(cnf, block);
+        for (int p : s.pos_indices)
+            for (int n : s.neg_indices)
+                append_merged_clause(result, {clause_tail(cnf.clauses[p], pivot),
+                                              clause_tail(cnf.clauses[n], pivot)},
+                                     {cnf.clauses[p], cnf.clauses[n]});
+        return {true, "RR10", pivot, 0, vector<int>(block.begin(), block.end()), result};
+    }
+    return {};
+}
+
+// Xu 2019 R-Rule 11: the all-false exception to (2,1) resolution is
+// impossible when the union of the three tails contains y and not-y.
+ReductionStep apply_rr11(const CNF &cnf, const map<int, FormulaVarStats> &stats)
+{
+    for (const auto &[pivot, s] : stats)
+    {
+        if (!((s.pos_count == 2 && s.neg_count == 1) ||
+              (s.pos_count == 1 && s.neg_count == 2))) continue;
+        const auto &twice = s.pos_count == 2 ? s.pos_indices : s.neg_indices;
+        const auto &once = s.pos_count == 1 ? s.pos_indices : s.neg_indices;
+        set<int> block(twice.begin(), twice.end()); block.insert(once[0]);
+        if (block.size() != 3) continue;
+        set<int> tails;
+        bool complementary = false;
+        for (int index : block)
+            for (auto *lit : cnf.clauses[index]->lits)
+                if (!is_any_unknown_literal(lit) && lit->id != pivot)
+                {
+                    int v = lit->inv ? -lit->id : lit->id;
+                    complementary |= tails.count(-v); tails.insert(v);
+                }
+        if (!complementary) continue;
+        CNF *result = copy_without(cnf, block);
+        for (int index : twice)
+            append_merged_clause(result, {clause_tail(cnf.clauses[index], pivot),
+                                          clause_tail(cnf.clauses[once[0]], pivot)},
+                                 {cnf.clauses[index], cnf.clauses[once[0]]});
+        return {true, "RR11", pivot, 1, vector<int>(block.begin(), block.end()), result};
+    }
+    return {};
+}
 } // namespace
 
 ReductionStep apply_named_reduction(const CNF &cnf, const string &rule)
@@ -528,12 +596,14 @@ ReductionStep apply_named_reduction(const CNF &cnf, const string &rule)
     if (rule == "RR7") return apply_rr7(cnf, stats);
     if (rule == "RR8") return apply_rr8(cnf, stats);
     if (rule == "RR9") return apply_rr9(cnf, stats);
+    if (rule == "RR10") return apply_rr10(cnf, stats);
+    if (rule == "RR11") return apply_rr11(cnf, stats);
     return {};
 }
 
 ReductionStep apply_first_reduction(const CNF &cnf)
 {
-    for (int number = 1; number <= 9; ++number)
+    for (int number = 1; number <= 11; ++number)
     {
         ReductionStep step = apply_named_reduction(
             cnf, "RR" + to_string(number));
@@ -644,6 +714,29 @@ vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf)
     return candidates;
 }
 
+CNF *lemma3_resolution(const CNF &cnf, int pivot, int &long_decrease)
+{
+    auto stats = analyze_formula(cnf);
+    auto found = stats.find(pivot);
+    if (found == stats.end()) return nullptr;
+    const auto &st = found->second;
+    if (!((st.pos_count == 2 && st.neg_count == 1) ||
+          (st.neg_count == 2 && st.pos_count == 1))) return nullptr;
+    const auto &twice = st.pos_count == 2 ? st.pos_indices : st.neg_indices;
+    const auto &once = st.pos_count == 1 ? st.pos_indices : st.neg_indices;
+    set<int> incident = {twice[0], twice[1], once[0]};
+    if (incident.size() != 3) return nullptr;
+    int D = st.pos_count == 1 ? st.pos_min_D : st.neg_min_D;
+    long_decrease = max(8, 7 + 2 * D);
+    CNF *result = copy_without(cnf, incident);
+    for (int index : twice)
+        append_merged_clause(result,
+                            {clause_tail(cnf.clauses[index], pivot),
+                             clause_tail(cnf.clauses[once[0]], pivot)},
+                            {cnf.clauses[index], cnf.clauses[once[0]]});
+    return result;
+}
+
 DirectLemmaResult find_best_direct_lemma23(const CNF &cnf, double q)
 {
     DirectLemmaResult best;
@@ -660,4 +753,19 @@ DirectLemmaResult find_best_direct_lemma23(const CNF &cnf, double q)
             best = candidate;
     }
     return best;
+}
+
+ProofNode polynomial_restart(const CNF &formula, const ReductionStep &step)
+{
+    if (!step.applied || !step.cnf || step.decrease!=0 ||
+        (step.rule!="RR7" && step.rule!="RR9" && step.rule!="RR10"))
+        return ProofNode();
+    auto before=analyze_formula(formula), after=analyze_formula(*step.cnf);
+    if (!before.count(step.pivot_id) || after.count(step.pivot_id) || after.size()>=before.size() ||
+        formula.clauses.size()!=step.cnf->clauses.size()) return ProofNode();
+    for (const auto &[id,stats] : after) if (!before.count(id)) return ProofNode();
+    ProofNode result({0});result.type="restart";result.tau=1;
+    result.rule=step.rule;result.pivot_id=step.pivot_id;result.formula_snapshot=formula.get_cert_snapshot();
+    ProofNode child({0});child.formula_snapshot=step.cnf->get_cert_snapshot();result.children.push_back(child);
+    return result;
 }

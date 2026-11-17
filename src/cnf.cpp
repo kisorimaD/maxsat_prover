@@ -1,5 +1,6 @@
 #include "cnf.h"
 #include "cert_logger.h"
+#include "lemmas.h"
 #include "strategy_cache.h"
 #include "group_cover.h"
 
@@ -77,6 +78,7 @@ long long GLOBAL_NODE_ID_COUNTER = 0;
 int GLOBAL_TAIL_ATOM_COUNTER = 0;
 
 int fresh_tail_atom() { return ++GLOBAL_TAIL_ATOM_COUNTER; }
+void reserve_tail_atoms(int maximum_id) { GLOBAL_TAIL_ATOM_COUNTER = max(GLOBAL_TAIL_ATOM_COUNTER, maximum_id); }
 
 CNF::CNF()
 {
@@ -86,11 +88,23 @@ CNF::CNF()
 CNF::CNF(CNF &cnf)
 {
     node_id = ++GLOBAL_NODE_ID_COUNTER;
+    tail_exclusions = cnf.tail_exclusions;
     clauses.resize(cnf.clauses.size());
     for (int i = 0; i < (int)clauses.size(); ++i)
     {
         clauses[i] = new Clause(*cnf.clauses[i]);
     }
+}
+
+TailExclusions CNF::active_tail_exclusions() const
+{
+    TailExclusions result;
+    if (tail_exclusions.empty()) return result;
+    for (const auto *clause : clauses)
+        for (const auto &[tail, flag] : clause->tail_atoms)
+            if (tail_exclusions.count(tail) && !tail_exclusions.at(tail).empty())
+                result[tail] = tail_exclusions.at(tail);
+    return result;
 }
 
 std::vector<std::vector<int>> CNF::get_snapshot()
@@ -235,6 +249,48 @@ int count_set_bits(int n)
     return cnt;
 }
 
+// Compare scores at the SAME valuation of every unassigned literal/tail.
+// Unchanged clauses cancel. A clause gained from a guaranteed-false clause
+// pays for one possibly lost satisfied clause. This subsumes both satisfied-
+// set inclusion and the old whole-formula min(other) >= max(row) test.
+static vector<int> undominated_assignments(const vector<int> &satisfied,
+                                           const vector<int> &falsified,
+                                           map<int, int> &subsumptions)
+{
+    vector<int> yes(satisfied.size()), no(falsified.size()), retained;
+    for (int row = 0; row < (int)satisfied.size(); ++row)
+    {
+        yes[row] = count_set_bits(satisfied[row]);
+        no[row] = count_set_bits(falsified[row]);
+    }
+    for (int row = 0; row < (int)satisfied.size(); ++row)
+    {
+        bool dominated = false;
+        for (int other = 0; other < (int)satisfied.size(); ++other)
+        {
+            // A successful comparison cannot lower (yes, -no): the
+            // unassigned remainder of each clause is fixed across rows.
+            // Equal ranks imply reciprocal dominance; retain the smaller
+            // row. Every witness then strictly raises this total order,
+            // so chains always terminate at a retained assignment.
+            if (yes[other] < yes[row] ||
+                (yes[other] == yes[row] && no[other] > no[row]) ||
+                (yes[other] == yes[row] && no[other] == no[row] && other >= row))
+                continue;
+            int gains = satisfied[other] & falsified[row];
+            int losses = satisfied[row] & ~satisfied[other];
+            if (count_set_bits(gains) >= count_set_bits(losses))
+            {
+                subsumptions[row] = other;
+                dominated = true;
+                break;
+            }
+        }
+        if (!dominated) retained.push_back(row);
+    }
+    return retained;
+}
+
 ProofNode CNF::branch(vector<int> ids)
 {
     validate_mask_input(*this, ids);
@@ -250,57 +306,9 @@ ProofNode CNF::branch(vector<int> ids)
                        no_clauses_mask);
 
     std::map<int, int> current_subsumptions;
-    vector<int> valid_masks;
-
-    for (int mask = 0; mask < (1 << k); ++mask)
-    {
-        bool is_subset = false;
-
-        int max_val = (*this).clauses.size() -
-                      count_set_bits(no_clauses_mask[mask]); // YES + "?"
-
-        for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
-        {
-            if (mask == other_mask)
-                continue;
-
-            if (clauses_mask[mask] == clauses_mask[other_mask])
-            {
-                if (other_mask >= mask)
-                {
-                    continue;
-                }
-            }
-
-            if (count_set_bits(clauses_mask[other_mask]) >= max_val)
-            {
-                if ((*this).clauses.size() -
-                            count_set_bits(no_clauses_mask[other_mask]) <=
-                        count_set_bits(clauses_mask[mask]) &&
-                    other_mask > mask)
-                {
-                    continue;
-                }
-
-                current_subsumptions[mask] = other_mask;
-                is_subset = true;
-                break;
-            }
-
-            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
-            {
-                current_subsumptions[mask] = other_mask;
-                is_subset = true;
-                break;
-            }
-        }
-
-        if (!is_subset)
-        {
-            branch.push_back(reduced_clauses[mask]);
-            valid_masks.push_back(mask);
-        }
-    }
+    vector<int> valid_masks = undominated_assignments(
+        clauses_mask, no_clauses_mask, current_subsumptions);
+    for (int mask : valid_masks) branch.push_back(reduced_clauses[mask]);
 
     ProofNode node(branch);
     node.formula_snapshot = this->get_cert_snapshot();
@@ -807,58 +815,9 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
     int k = ids.size();
     vector<int> clauses_mask(1 << k), reduced_clauses(1 << k), no_clauses_mask(1 << k);
     calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
-    vector<int> masks;
-
     std::map<int, int> current_subsumptions;
-
-    for (int mask = 0; mask < (1 << k); ++mask)
-    {
-        bool is_subset = false;
-
-        int max_val = (*this).clauses.size() -
-                      count_set_bits(no_clauses_mask[mask]); // YES + "?"
-
-        for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
-        {
-            if (mask == other_mask)
-                continue;
-
-            if (clauses_mask[mask] == clauses_mask[other_mask])
-            {
-                if (other_mask >= mask)
-                {
-                    continue;
-                }
-            }
-
-            if (count_set_bits(clauses_mask[other_mask]) >= max_val)
-            {
-                if (((*this).clauses.size() -
-                         count_set_bits(no_clauses_mask[other_mask]) <=
-                     count_set_bits(clauses_mask[mask])) &&
-                    (other_mask > mask))
-                {
-                    continue;
-                }
-
-                current_subsumptions[mask] = other_mask;
-                is_subset = true;
-                break;
-            }
-
-            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
-            {
-                current_subsumptions[mask] = other_mask;
-                is_subset = true;
-                break;
-            }
-        }
-
-        if (!is_subset)
-        {
-            masks.push_back(mask);
-        }
-    }
+    vector<int> masks = undominated_assignments(
+        clauses_mask, no_clauses_mask, current_subsumptions);
 
     struct Candidate {
         vector<int> rows;
@@ -944,8 +903,10 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
         long double best_weight = numeric_limits<long double>::infinity();
         auto consider = [&](vector<int> vec, GroupWitness witness) {
             for (int &value : vec) value += base;
-            if (vec.empty() || any_of(vec.begin(), vec.end(), [](int d) { return d <= 0; }))
-                return; // No admissible cover can use a nonprogressing leaf.
+            if (vec.empty() || any_of(vec.begin(),vec.end(),[](int d){return d<0;})) return;
+            if (any_of(vec.begin(),vec.end(),[](int d){return d==0;}) &&
+                !(witness.rule=="residual_search" && witness.residual_proof &&
+                  proof_establishes_progress(*witness.residual_proof))) return;
             long double weight = branching_weight(vec, q);
             if (weight < best_weight)
             {
@@ -1034,11 +995,34 @@ long double branching_weight(const vector<int> &a, double q)
     return total;
 }
 
-bool meets_branching_target(const vector<int> &a, double q)
+bool meets_branching_target(const vector<int> &a, double q, long double weight_target)
 {
+    if (!std::isfinite(weight_target) || weight_target <= 0)
+        throw invalid_argument("weight target must be finite and positive");
     // A call has weight one but does not establish a progressing strategy.
     return !a.empty() && all_of(a.begin(), a.end(), [](int d) { return d > 0; }) &&
-           branching_weight(a, q) <= 1.0L;
+           branching_weight(a, q) <= weight_target;
+}
+
+bool proof_establishes_progress(const ProofNode &p)
+{
+    if (p.type=="restart") return MaxSATSettings.ALLOW_POLYNOMIAL_RESTARTS;
+    if (p.type=="divide_clause") return !p.children.empty() && all_of(p.children.begin(),p.children.end(),proof_establishes_progress);
+    if (p.type=="reduction" && p.children.size()==1)
+        return p.formula_snapshot.size()>p.children[0].formula_snapshot.size() || proof_establishes_progress(p.children[0]);
+    if (p.type=="enumeration" && !p.alternatives.empty())
+        return all_of(p.alternatives.begin(),p.alternatives.end(),[](const auto &a){return a.decrease>0 || (a.proof && proof_establishes_progress(*a.proof));});
+    if ((p.type=="branch" || p.type=="xiao_property2_branch" || p.type=="xiao_property1_branch") && p.children.size()==2)
+        return (p.reduced_cnt_true>0 || (!p.property2_sides.empty() && p.property2_sides[0]) || proof_establishes_progress(p.children[0])) &&
+               (p.reduced_cnt_false>0 || (p.property2_sides.size()>1 && p.property2_sides[1]) || proof_establishes_progress(p.children[1]));
+    return !p.vec.empty() && all_of(p.vec.begin(),p.vec.end(),[](int d){return d>0;});
+}
+
+bool meets_strategy_target(const ProofNode &p,double q,long double target)
+{
+    if (!std::isfinite(target) || target<=0) throw invalid_argument("weight target must be finite and positive");
+    return !p.vec.empty() && all_of(p.vec.begin(),p.vec.end(),[](int d){return d>=0;}) &&
+           branching_weight(p.vec,q)<=target && proof_establishes_progress(p);
 }
 
 double f_value(double x, const vector<int> &a)
@@ -1179,10 +1163,30 @@ void print_cnf(CNF &cnf)
         print_clause(*c);
     }
     cout << endl;
+    for (const auto &[tail, types] : cnf.active_tail_exclusions())
+    {
+        vector<int> indices;
+        for (size_t i = 0; i < cnf.clauses.size(); ++i)
+            if (cnf.clauses[i]->tail_atoms.count(tail)) indices.push_back(int(i));
+        cout << "Хвост в клозе" << (indices.size() > 1 ? "ах" : "") << " [";
+        for (size_t i = 0; i < indices.size(); ++i) cout << (i ? "," : "") << indices[i];
+        cout << "]: нет литералов типов ";
+        bool first = true;
+        for (const auto &d : types) {
+            cout << (first ? "" : ", ") << '(' << d[0] << ',' << d[1] << ") "
+                 << (d[2] ? "SINGLETON" : "ANY");
+            first = false;
+        }
+        cout << '\n';
+    }
 }
 
 static unordered_map<string, long long> used_node_storage;
 unordered_map<string, long long> *used_nodes = &used_node_storage;
+static size_t exposure_child_limit = std::numeric_limits<size_t>::max();
+void set_exposure_child_limit(size_t limit) { exposure_child_limit = limit; }
+
+void clear_exposure_deduplication() { used_nodes->clear(); }
 
 void preprocess(int maximum_clause_size)
 {
@@ -1195,6 +1199,11 @@ void preprocess(int maximum_clause_size)
 
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
+    MaxSATSettings.ALLOW_LEMMA3_SPLIT = true;
+    MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT = false;
+    MaxSATSettings.ALLOW_XIAO_PROPERTY2 = false;
+    MaxSATSettings.ALLOW_XIAO_PROPERTY1 = false;
+    MaxSATSettings.ALLOW_POLYNOMIAL_RESTARTS = false;
 
     POSSIBLE_LITERALS = {{3, 1, SINGLETON},
                          {2, 2, ANY},       {3, 2, ANY},
@@ -1296,6 +1305,11 @@ string cnf_to_max_string(CNF *cnf)
                 lits_str.push_back((lit->inv ? "~" : "=") +
                                    to_string(mapped_id));
             }
+            for (const auto &[tail, nonempty] : clause->tail_atoms)
+                if (cnf->tail_exclusions.count(tail))
+                    for (const auto &d : cnf->tail_exclusions.at(tail))
+                        lits_str.push_back("exclude:" + to_string(d[0]) + ":" +
+                                           to_string(d[1]) + ":" + to_string(d[2]));
             sort(lits_str.begin(), lits_str.end());
             string clause_str = "(" + join(lits_str, "∨") + ")";
             clauses_str.push_back(clause_str);
@@ -1311,6 +1325,47 @@ string cnf_to_max_string(CNF *cnf)
     } while (next_permutation(perm.begin(), perm.end()));
 
     return max_str;
+}
+
+// A shown literal may not be taken from a tail excluding its type. If ANY
+// partially overlaps an excluded singleton type, retain its non-singleton
+// subcase by requiring the unique opposite clause to be non-unit.
+static bool respects_tail_exclusions(const CNF &parent, CNF &child, int variable,
+                                    int positive, int negative)
+{
+    if (parent.tail_exclusions.empty()) return true;
+    for (size_t index = 0; index < parent.clauses.size(); ++index)
+        for (bool inv : {false, true})
+        {
+            if (!child.clauses[index]->lits.count(intern_literal(variable, inv))) continue;
+            int p = inv ? negative : positive, n = inv ? positive : negative;
+            for (const auto &[tail, flag] : parent.clauses[index]->tail_atoms)
+            {
+                auto found = parent.tail_exclusions.find(tail);
+                if (found == parent.tail_exclusions.end()) continue;
+                for (const auto &d : found->second)
+                {
+                    if (d[0] != p || d[1] != n) continue;
+                    if (!d[2]) return false;
+                    if (n != 1) continue;
+                    for (auto *clause : child.clauses)
+                    {
+                        if (!clause->lits.count(intern_literal(variable, !inv))) continue;
+                        int known = 0;
+                        for (auto *lit : clause->lits) known += !is_any_unknown_literal(lit);
+                        if (known > 1) continue;
+                        if (clause->tail_atoms.empty()) return false;
+                        // Structural exposure has a single clause-local tail.
+                        if (clause->tail_atoms.size() != 1)
+                            throw logic_error("singleton exclusion needs one opposite tail");
+                        clause->tail_atoms.begin()->second = true;
+                        clause->lits.erase(&UNKNOWN_LITERAL);
+                        clause->lits.insert(&UNKNOWN_NOT_EMPTY_LITERAL);
+                    }
+                }
+            }
+        }
+    return true;
 }
 
 vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
@@ -1475,12 +1530,15 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                         }
                     }
 
+                    if (!respects_tail_exclusions(*cnf, *now_cnf, named.id, i, j))
+                        continue;
                     string now_cnf_str = cnf_to_max_string(now_cnf);
 
                     if (used_nodes->find(now_cnf_str) == used_nodes->end())
                     {
                         ans.push_back(owner.release());
                         (*used_nodes)[now_cnf_str] = now_cnf->node_id;
+                        if (used_nodes->size() > exposure_child_limit) throw ExposureLimitExceeded();
                         out_children_ids.push_back(now_cnf->node_id); // Сохраняем ID нового графа
                     }
                     else
@@ -1522,15 +1580,17 @@ vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type)
 vector<CNF *>
 add_new_var_in_place(CNF *cnf, string v_name,
                      const std::function<int(CNF *)> &need_index_func,
-                     vector<LiteralDegType> variants)
+                     vector<LiteralDegType> variants, vector<long long> *child_ids)
 {
     int pos = need_index_func(cnf);
 
     // This formula has no wildcard clause satisfying the positional query.
     // Keep it in the frontier unchanged instead of silently exposing the new
     // variable in clause zero (which does not satisfy the query).
-    if (pos < 0)
+    if (pos < 0) {
+        if (child_ids) *child_ids={cnf->node_id};
         return {cnf};
+    }
 
     if (pos >= (int)cnf->clauses.size())
         throw invalid_argument("exposure clause out of range");
@@ -1571,14 +1631,67 @@ add_new_var_in_place(CNF *cnf, string v_name,
         }
     }
 
-    global_logger.log_addpos(cnf->node_id, cnf->get_cert_snapshot(), VAR2ID[v_name], pos, variants, unique_children_ids);
+    if (child_ids) *child_ids=unique_children_ids;
+    global_logger.log_addpos(cnf->node_id, cnf->get_cert_snapshot(), VAR2ID[v_name], pos, variants, unique_children_ids, cnf->active_tail_exclusions());
 
     return ans;
 }
 
-// Функция возвращает пару {CNF_с_пустотой, CNF_с_непустотой(?+)}
-DivideResult empty_divide(CNF *cnf, double q)
+vector<CNF *> expose_type_in_place(CNF *cnf, string name,
+    const std::function<int(CNF *)> &position, LiteralDegType degree,
+    const vector<LiteralDegType> &scope, vector<long long> *child_ids)
 {
+    validate_degree(degree.i, degree.j, degree.type);
+    if (none_of(scope.begin(), scope.end(), [&](const auto &d) {
+            return d.i == degree.i && d.j == degree.j && d.type == degree.type;
+        })) throw invalid_argument("expose_type: type is not in the current degree family");
+    int pos = position(cnf);
+    if (pos < 0) {
+        if (child_ids) *child_ids = {cnf->node_id};
+        return {cnf};
+    }
+    if (pos >= int(cnf->clauses.size()) || cnf->clauses[pos]->tail_atoms.size() != 1)
+        throw invalid_argument("expose_type requires a clause-local single tail");
+    if (none_of(cnf->clauses[pos]->lits.begin(), cnf->clauses[pos]->lits.end(),
+                [](Literal *lit) { return !is_any_unknown_literal(lit); }))
+        throw invalid_argument("expose_type requires an active literal");
+    // Structural exposure cannot allocate placements into correlated atoms.
+    set<int> seen;
+    for (auto *clause : cnf->clauses)
+    {
+        if (clause->tail_atoms.size() > 1)
+            throw invalid_argument("expose_type requires clause-local single tails");
+        for (const auto &[tail, flag] : clause->tail_atoms)
+            if (!seen.insert(tail).second)
+                throw invalid_argument("expose_type requires independent clause-local tails");
+    }
+    int tail = cnf->clauses[pos]->tail_atoms.begin()->first;
+    array<int, 3> requested = {degree.i, degree.j, degree.type == SINGLETON};
+    if (cnf->tail_exclusions.count(tail))
+        for (const auto &d : cnf->tail_exclusions.at(tail))
+            if (d[0] == requested[0] && d[1] == requested[1] && (!d[2] || requested[2])) {
+                if (child_ids) *child_ids = {cnf->node_id};
+                return {cnf};
+            }
+    vector<long long> children;
+    auto present = add_new_var_universal(cnf, name, degree.i, degree.j,
+                                         degree.type, pos, true, true, children);
+    CNF *absent = new CNF(*cnf);
+    absent->tail_exclusions[tail].insert(requested);
+    present.push_back(absent);
+    children.push_back(absent->node_id);
+    sort(children.begin(), children.end());
+    children.erase(unique(children.begin(), children.end()), children.end());
+    if (child_ids) *child_ids = children;
+    global_logger.log_expose_type(*cnf, VAR2ID.at(name), pos, degree, scope, children);
+    return present;
+}
+
+// Функция возвращает пару {CNF_с_пустотой, CNF_с_непустотой(?+)}
+DivideResult empty_divide(CNF *cnf, double q, int group_limit)
+{
+    if (group_limit < 0 || group_limit > MAX_MASK_BITS)
+        throw invalid_argument("invalid split group-variable limit");
     DivideResult best_split;
     long double min_worst_weight = std::numeric_limits<long double>::infinity();
 
@@ -1598,6 +1711,7 @@ DivideResult empty_divide(CNF *cnf, double q)
             ProofNode node = candidate->xiao_branch(1, "x", q);
             result = branching_weight(node.vec, q);
         }
+        if (ids.size() <= static_cast<std::size_t>(group_limit))
         {
             ProofNode node = candidate->branch_group(ids, -1, false, q);
             result = min(result, branching_weight(node.vec, q));
@@ -1612,6 +1726,7 @@ DivideResult empty_divide(CNF *cnf, double q)
             ProofNode node = candidate->xiao_branch(1, "x", q);
             xiao_weight = branching_weight(node.vec, q);
         }
+        if (ids.size() <= static_cast<std::size_t>(group_limit))
         {
             ProofNode group_node = candidate->branch_group(ids, -1, false, q);
             if (branching_weight(group_node.vec, q) <= xiao_weight)
@@ -1679,14 +1794,20 @@ DivideResult empty_divide(CNF *cnf, double q)
             best_proof(best_split.cnf_empty));
         best_split.proof_tree.children.push_back(
             best_proof(best_split.cnf_not_empty));
-        best_split.proof_tree.tau = max(
-            best_split.proof_tree.children[0].tau,
-            best_split.proof_tree.children[1].tau);
+        const ProofNode &worst = branching_weight(best_split.proof_tree.children[0].vec, q) >=
+                                branching_weight(best_split.proof_tree.children[1].vec, q)
+                                    ? best_split.proof_tree.children[0]
+                                    : best_split.proof_tree.children[1];
+        best_split.proof_tree.vec = worst.vec;
+        best_split.proof_tree.tau = branching_factor(worst.vec);
+        remember_lemma_candidate(best_split.cnf_empty->node_id, best_split.proof_tree.children[0]);
+        remember_lemma_candidate(best_split.cnf_not_empty->node_id, best_split.proof_tree.children[1]);
 
         global_logger.log_divide(cnf->node_id, cnf->get_cert_snapshot(),
                                  best_split.proof_tree.target_clause_idx,
                                  best_split.cnf_empty->node_id,
-                                 best_split.cnf_not_empty->node_id);
+                                 best_split.cnf_not_empty->node_id,
+                                 cnf->active_tail_exclusions());
     }
 
     return best_split;

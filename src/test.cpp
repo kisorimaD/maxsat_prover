@@ -3,6 +3,7 @@
 #include "cert_logger.h"
 #include "strategy_cache.h"
 #include "group_cover.h"
+#include "lemmas.h"
 
 #include <algorithm>
 #include <assert.h>
@@ -105,6 +106,210 @@ void delete_dummy_cnf(CNF* cnf) {
     delete cnf;
 }
 
+void test_proved_lemmas()
+{
+    bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+    set_strategy_cache_enabled(true);
+    vector<vector<int>> snapshot = {
+        {2, 3, 1}, {2, -3, 0}, {2, -4, 0}, {-2}, {-2, 4, 0},
+        {3, 4, 0}, {-3, -4, 0}};
+    CNF *formula = create_dummy_cnf(snapshot);
+    auto matches = find_proved_lemma_applications(*formula);
+    assert(matches.size() == 1);
+    assert(matches[0].id == "step5.1");
+    assert(matches[0].role_literals == vector<int>({2}));
+    assert(matches[0].witness_clauses == vector<int>({3}));
+    ProofNode leaf = formula->xiao_branch(0, "", 1.2872);
+    assert(leaf.type == "lemma" && leaf.lemma_application);
+    assert(leaf.vec == vector<int>({4, 2}));
+    assert(global_logger.serialize_proof(leaf).find("\"kind\":\"lemma\"") != string::npos);
+    // JSON fixtures for the Python generator/assembler/checker integration test.
+    cout << global_logger.serialize_proof(leaf) << '\n';
+
+    CNF *renamed_tails = create_dummy_cnf(snapshot);
+    ProofNode cached = renamed_tails->xiao_branch(0, "", 1.2872);
+    assert(strategy_cache_stats().hits == 1);
+    assert(cached.formula_snapshot != leaf.formula_snapshot);
+    assert(cached.formula_snapshot == renamed_tails->get_cert_snapshot());
+    assert(cached.lemma_application->witness_clauses == matches[0].witness_clauses);
+    assert(cached.lemma_application->role_literals == matches[0].role_literals);
+    delete_dummy_cnf(renamed_tails);
+    delete_dummy_cnf(formula);
+
+    for (auto &clause : snapshot)
+        for (int &lit : clause) if (abs(lit) == 2) lit = -lit;
+    formula = create_dummy_cnf(snapshot);
+    leaf = formula->xiao_branch(0, "", 1.2872);
+    assert(leaf.type == "lemma" && leaf.lemma_application->role_literals == vector<int>({-2}));
+    cout << global_logger.serialize_proof(leaf) << '\n';
+    delete_dummy_cnf(formula);
+
+    formula = create_dummy_cnf({{2, 0}, {2, 0}, {2, 0}, {-2, 0}, {-2, 0}});
+    assert(find_proved_lemma_applications(*formula).empty()); // no minority unit
+    delete_dummy_cnf(formula);
+    formula = create_dummy_cnf({{2, 0}, {2, 0}, {2, 0}, {2, 0}, {-2}, {-2, 0}});
+    assert(find_proved_lemma_applications(*formula).empty()); // wrong degree
+    delete_dummy_cnf(formula);
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved_assumptions;
+    clear_strategy_cache();
+    cout << "Proof-backed local lemma tests passed\n";
+}
+
+void test_saved_lemmas()
+{
+    const double q = 1.2873;
+    set_lemma_search_target("1.2873");
+    vector<LiteralDegType> scope;
+    for (const auto &degree : POSSIBLE_LITERALS) if (degree.i != 2 || degree.j != 1) scope.push_back(degree);
+    set_lemma_degree_scope(scope);
+    vector<vector<int>> snapshot = {
+        {7, 3, 1}, {7, -3, 0}, {7, -4, 0}, {-7}, {-7, 4, 0},
+        {3, 4, 0}, {-3, -4, 0}};
+    CNF *formula = create_dummy_cnf(snapshot);
+    auto matches = find_saved_lemma_applications(*formula, q);
+    for (const auto &match : matches)
+        cout << global_logger.serialize_proof(lemma_application_leaf(*formula, match)) << '\n';
+    if (!matches.empty())
+    {
+        clear_strategy_cache();
+        ProofNode leaf = cached_strategy_search(*formula, StrategySearchKind::Variable, 0, q,
+            [&] { return lemma_application_leaf(*formula, matches.front()); });
+        CNF *fresh = create_dummy_cnf(snapshot);
+        auto hit = cached_strategy_search(*fresh, StrategySearchKind::Variable, 0, q,
+            [&] { throw logic_error("expected cached saved lemma"); return ProofNode(); });
+        assert(strategy_cache_stats().hits == 1);
+        assert(hit.formula_snapshot == fresh->get_cert_snapshot());
+        assert(hit.formula_snapshot != leaf.formula_snapshot);
+        assert(hit.lemma_application->definition_digest == matches.front().definition_digest);
+        delete_dummy_cnf(fresh);
+        auto before = strategy_cache_stats().misses;
+        // Different exact decimals can round to the same double. They must
+        // neither match this fixed-q artifact nor reuse its cached proof.
+        set_lemma_search_target("1.28730000000000000000000000001");
+        auto different = find_saved_lemma_applications(*formula, q);
+        for (const auto &old : matches)
+            assert(none_of(different.begin(), different.end(), [&](const auto &match) { return match.id == old.id; }));
+        cached_strategy_search(*formula, StrategySearchKind::Variable, 0, q, [&] {
+            ProofNode call({0}); call.formula_snapshot = formula->get_cert_snapshot(); return call;
+        });
+        assert(strategy_cache_stats().misses > before);
+        set_lemma_search_target("1.2873");
+        auto policy = saved_lemma_policy_revision();
+        set_lemma_degree_scope({});
+        assert(saved_lemma_policy_revision() != policy);
+        set_lemma_degree_scope(scope);
+    }
+    delete_dummy_cnf(formula);
+    for (auto &clause : snapshot) for (int &literal : clause) if (abs(literal) == 7) literal = -literal;
+    formula = create_dummy_cnf(snapshot);
+    for (const auto &match : find_saved_lemma_applications(*formula, q))
+        cout << global_logger.serialize_proof(lemma_application_leaf(*formula, match)) << '\n';
+    delete_dummy_cnf(formula);
+    clear_strategy_cache();
+    cout << "Saved lemma matching and policy tests passed\n";
+}
+
+void test_compensated_absorption()
+{
+    const double q = 1.2872;
+    bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
+    int saved_width = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = -1;
+
+    // The unit gained by x=1 compensates for a possibly lost clause. The
+    // common uncertain clause cancels; whole-formula min/max misses this.
+    CNF *compensated = create_dummy_cnf({{2}, {-2, 3, 0}, {3, 0}});
+    ProofNode proof = compensated->branch({2});
+    assert((proof.subsumptions == map<int, int>({{0, 1}})));
+    assert(proof.vec == vector<int>({1}));
+    assert(compensated->branch_group({2}, -1, true, q).subsumptions == proof.subsumptions);
+    cout << global_logger.serialize_proof(proof) << '\n';
+    delete_dummy_cnf(compensated);
+
+    // Reciprocal compensation must retain a representative, never a cycle.
+    CNF *tied = create_dummy_cnf({{2}, {-2}, {3, 0}});
+    ProofNode tied_proof = tied->branch({2});
+    assert((tied_proof.subsumptions == map<int, int>({{1, 0}})));
+    assert(tied->branch_group({2}, -1, true, q).subsumptions == tied_proof.subsumptions);
+    cout << global_logger.serialize_proof(tied_proof) << '\n';
+    delete_dummy_cnf(tied);
+
+    // Distinct unknown remainders cannot be cancelled against each other.
+    CNF *distinct = create_dummy_cnf({{2, 0}, {-2, 1}});
+    ProofNode distinct_proof = distinct->branch({2});
+    assert(distinct_proof.subsumptions.empty());
+    assert(distinct->branch_group({2}, -1, true, q).subsumptions.empty());
+    cout << global_logger.serialize_proof(distinct_proof) << '\n';
+    delete_dummy_cnf(distinct);
+
+    // Previously the best ordinary search on this lemma4 case gave (2,3).
+    CNF *lemma4 = create_dummy_cnf({
+        {2}, {2, 3, 4, 0}, {-2, 3, 0}, {-2, 4, 0},
+        {-3, 0}, {-3, 0}, {-4, 0}, {-4, 0}});
+    ProofNode grouped = lemma4->branch_group({2, 3, 4}, -1, true, q);
+    assert(branching_weight(grouped.vec, q) <= branching_weight({2, 7}, q));
+    assert(lemma4->branch_group({2, 3, 4}, -1, false, q).vec == grouped.vec);
+    cout << global_logger.serialize_proof(grouped) << '\n';
+    delete_dummy_cnf(lemma4);
+
+    // Independent oracle: every discarded assignment must lose to its
+    // witness at every valuation of unassigned variables and symbolic tails.
+    mt19937 rng(81743);
+    for (int trial = 0; trial < 120; ++trial)
+    {
+        vector<vector<int>> clauses;
+        for (int c = 0; c < 1 + trial % 8; ++c)
+        {
+            vector<int> clause;
+            for (int id = 2; id <= 5; ++id)
+                if (rng() % 3 == 0) clause.push_back((rng() % 2 ? 1 : -1) * id);
+            if (rng() % 2) clause.push_back(rng() % 2); // ? or ?+
+            clauses.push_back(clause);
+        }
+        CNF *formula = create_dummy_cnf(clauses);
+        ProofNode branch = formula->branch({2, 3, 4});
+        map<int, int> tails;
+        for (const auto &clause : branch.formula_snapshot)
+            for (int lit : clause)
+                if (lit >= SNAP_TAIL_ANY_BASE && !tails.count(lit))
+                    tails.emplace(lit, tails.size());
+        auto score = [&](int row, int outside) {
+            int result = 0;
+            for (const auto &clause : branch.formula_snapshot)
+            {
+                bool satisfied = false;
+                for (int lit : clause)
+                    if (lit >= SNAP_TAIL_ANY_BASE)
+                        satisfied |= bool((outside >> (1 + tails.at(lit))) & 1);
+                    else
+                        satisfied |= bool(((abs(lit) == 5 ? outside : row) >>
+                            (abs(lit) == 5 ? 0 : abs(lit) - 2)) & 1) == (lit > 0);
+                result += satisfied;
+            }
+            return result;
+        };
+        for (auto [row, witness] : branch.subsumptions)
+        {
+            for (int outside = 0; outside < (1 << (1 + tails.size())); ++outside)
+                assert(score(witness, outside) >= score(row, outside));
+            set<int> chain;
+            int current = row;
+            while (branch.subsumptions.count(current))
+            {
+                assert(chain.insert(current).second);
+                current = branch.subsumptions.at(current);
+            }
+            assert(branch.partition.at(current) >= 0);
+        }
+        delete_dummy_cnf(formula);
+    }
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved_assumptions;
+    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = saved_width;
+    cout << "Compensated absorption tests passed\n";
+}
+
 void test_group_cover()
 {
     // Compare direct image generation to the old independent validity test
@@ -181,8 +386,8 @@ void test_group_cover()
                    fabsl(actual.weight - optimum) < 1e-12L);
         }
     }
-    // Actual CNF: overlap improves even over disjoint covers that are allowed
-    // to add dominated rows. All children are constructive, with no imports.
+    // Actual CNF: compensated absorption reduces the former overlapping
+    // (6,8) cover to a single (6) group. No imported children are needed.
     bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
     int saved_width = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
@@ -192,13 +397,13 @@ void test_group_cover()
         {2, 0}, {4}, {2, 3, 0}, {4, 0}, {-3},
         {-2, 3, -4, 0}, {-4, 0}, {2}, {-2, -3, 0}, {-3, -4, 0}});
     ProofNode proof = formula->branch_group({2, 3, 4}, -1, true, q);
-    assert(proof.vec == vector<int>({6, 8}));
-    assert(proof.cover_groups == vector<vector<int>>({{0, 1, 4, 5}, {5, 7}}));
+    assert(proof.vec == vector<int>({6}));
+    assert(proof.cover_groups == vector<vector<int>>({{1, 5}}));
     assert(formula->branch_group({2, 3, 4}, -1, false, q).vec == proof.vec);
     int required = 0;
     for (int row = 0; row < 8; ++row)
         if (!proof.subsumptions.count(row)) required |= 1 << row;
-    assert(required == ((1 << 1) | (1 << 4) | (1 << 5) | (1 << 7)));
+    assert(required == ((1 << 1) | (1 << 5)));
     vector<pair<int, long double>> costs;
     enumerate_substitution_groups(3, [&](const vector<int> &rows) {
         int coverage = 0;
@@ -226,11 +431,11 @@ void test_group_cover()
                 best = min(best, weight + disjoint(remaining ^ coverage));
         return disjoint_memo[remaining] = best;
     };
-    assert(fabsl(disjoint(required) - branching_weight({6, 7}, q)) < 1e-12L);
-    assert(branching_weight(proof.vec, q) < disjoint(required));
+    assert(fabsl(disjoint(required) - branching_weight(proof.vec, q)) < 1e-12L);
+    assert(branching_weight(proof.vec, q) < branching_weight({6, 8}, q));
 
     // Independently check the semantic identity at every tail valuation,
-    // including the overlapping row and all additional dominated rows.
+    // including all additionally dominated rows.
     map<int, int> tail_index;
     for (const auto &clause : proof.formula_snapshot)
         for (int literal : clause)
@@ -430,10 +635,31 @@ void test_weighted_search()
     assert(!meets_branching_target({}, q));
     assert(meets_branching_target({1, 1}, 2.0));
     assert(!meets_branching_target({1, 1}, 1.9));
+    assert(meets_branching_target({1, 3}, 2.0, 0.625L));
+    assert(!meets_branching_target({1, 3}, 2.0, 0.6L));
+    assert(!meets_branching_target({0}, 2.0, 2.0L));
     bool rejected = false;
     try { branching_weight({1}, 1.0); }
     catch (const invalid_argument &) { rejected = true; }
     assert(rejected);
+
+    // RR resolution can merge arbitrary and nonempty tails in one clause.
+    // Assigning its last ordinary variable must omit that whole boundary clause.
+    {
+        unique_ptr<CNF, decltype(&destroy_cnf)> mixed(new CNF(), destroy_cnf);
+        mixed->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, true)}));
+        for (int i = 0; i < 4; ++i)
+            mixed->clauses.push_back(new Clause(
+                vector<Literal*>{intern_literal(2, false), &UNKNOWN_LITERAL, &UNKNOWN_NOT_EMPTY_LITERAL},
+                {{fresh_tail_atom(), false}, {fresh_tail_atom(), true}}));
+        bool saved = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
+        MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+        ProofNode proof = mixed->xiao_branch(1, "", 2.0);
+        assert(proof.vec == vector<int>({5, 1}));
+        assert(proof.reduced_cnt_false == 1 && proof.children[1].formula_snapshot.empty());
+        cout << global_logger.serialize_proof(proof) << '\n';
+        MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved;
+    }
 
     // Both lemmas apply without an intervening RR.  Their cost curves cross:
     // the chosen root strategy must change when the target changes.
@@ -798,13 +1024,15 @@ void test_no_unknown_literal()
     // }
 }
 
-function<int(CNF *)> create_pos_func(set<Literal *, LiteralPtrLess> need_lits, set<Literal *, LiteralPtrLess> no_lits)
+function<int(CNF *)> create_pos_func(set<Literal *, LiteralPtrLess> need_lits, set<Literal *, LiteralPtrLess> no_lits,
+                                    function<bool(const CNF &, int)> eligible = {})
 {
-    return [need_lits, no_lits](CNF *cnf)
+    return [need_lits, no_lits, eligible](CNF *cnf)
     {
         for (int i = 0; i < cnf->clauses.size(); ++i)
         {
             Clause *now_clause = cnf->clauses[i];
+            if (eligible && !eligible(*cnf, i)) continue;
 
             if (!now_clause->lits.count(&UNKNOWN_LITERAL) &&
                 !now_clause->lits.count(&UNKNOWN_NOT_EMPTY_LITERAL))
@@ -860,7 +1088,7 @@ void printProgress_test(double percentage)
     std::cout << "\r" << val << "% [" << std::string(lpad, '#') << std::string(rpad, '-') << "]" << std::flush;
 }
 
-void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C, bool is_group_branch, bool is_xiao_branch, int xiao_depth = 1)
+void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C, bool is_group_branch, bool is_xiao_branch, int xiao_depth = 1, long double weight_target = 1.0L)
 {
     cout << "Начинается примитивная фильтрация\n";
     vector<CNF *> filtered_variants;
@@ -869,14 +1097,15 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
     {
         CNF *cnf = variants[i];
         ProofNode naive_node = cnf->branch(ids); // Используем ProofNode
+        remember_lemma_candidate(cnf->node_id, naive_node);
 
-        if (!meets_branching_target(naive_node.vec, C))
+        if (!meets_strategy_target(naive_node, C, weight_target))
         {  
             filtered_variants.push_back(cnf);
         }
         else
         {
-            global_logger.log_proof_tree(cnf->node_id, naive_node);
+            global_logger.log_proof_tree(cnf->node_id, naive_node, cnf->active_tail_exclusions());
         }
     }
 
@@ -893,13 +1122,14 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         {
             CNF *cnf = variants[i];
             ProofNode rr_node = cnf->xiao_branch(xiao_depth, "", C);
+            remember_lemma_candidate(cnf->node_id, rr_node);
 
-            if (!meets_branching_target(rr_node.vec, C)) {
+            if (!meets_strategy_target(rr_node, C, weight_target)) {
                 filtered_variants.push_back(cnf);
             }
             else
             {
-                global_logger.log_proof_tree(cnf->node_id, rr_node);
+                global_logger.log_proof_tree(cnf->node_id, rr_node, cnf->active_tail_exclusions());
             }
         }
         
@@ -941,10 +1171,11 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         // Analyze the groups once and solve one unrestricted weighted cover.
         // Constructive residual proofs are already retained by group analysis.
         ProofNode group_node = cnf->branch_group(ids, -1, true, C);
-        if (!meets_branching_target(group_node.vec, C))
+        remember_lemma_candidate(cnf->node_id, group_node);
+        if (!meets_strategy_target(group_node, C, weight_target))
             filtered_variants.push_back(cnf);
         else
-            global_logger.log_proof_tree(cnf->node_id, group_node);
+            global_logger.log_proof_tree(cnf->node_id, group_node, cnf->active_tail_exclusions());
 
         if (need_pb)
             progress_counter_test++;
@@ -970,9 +1201,15 @@ void print_help_universal()
     cout << "   add [var_name] [i] [j] [SINGLETON | ANY]\t\tЗадать корневое семейство один раз; SINGLETON требует j = 1\n";
     cout << "   addlit [i] [j] [SINGLETON | ANY]       \t\tДобавить тип в список возможных литералов на время запуска\n";
     cout << "   addpos [var_name] [need_names] [no_names]\t\tДобавить новую переменную в первую клозу, в которой есть все\n\t\t\t\t\t\t\tпеременные из need_names и нет ни одной из no_names. Ввод разделяется строчками\n";
+    cout << "   expose_type NAME i j SINGLETON|ANY     \t\tРаскрыть литерал заданного типа или сохранить отсутствие типа в хвосте;\n"
+            "                                             \t\tследующие две строки: need_names и no_names, как у addpos\n";
+    cout << "   back                                    \t\tВернуть родителей неразобранных детей последнего addpos / empty_divide\n";
     cout << "   sv [mask]                               \t\tУстановить возможные типы литералов по показанной битовой маске\n";
-    cout << "   set [branching factor]                  \t\tУстановить порог C (по умолчанию 1.2873)\n";
+    cout << "   set [q]                                 \t\tОснование в W_q (по умолчанию 1.2873)\n";
+    cout << "   weight_target [T]                       \t\tЗакрывать случаи при W_q <= T (по умолчанию 1)\n";
     cout << "   assumptions [on | off]                 \t\tРазрешить/запретить все named-assumption leaves\n";
+    cout << "   xiao_property2 [on | off]              \t\tИмпорт Property 2 с предпосылкой Xiao-reduced Step 6\n";
+    cout << "   xiao_property1 [on | off]              \t\tИмпорт Property 1 для стороны из 31-singleton\n";
     cout << "   branch                                  \t\tОбычное отсеивание + с группировкой бренчингом всех вариантов ниже С\n";
     cout << "   simple_branch                           \t\tОбычное отсеивание без группировки бренчингом всех вариантов ниже С\n";
     cout << "   target [i]                              \t\tОставить в рассмотрении только [i] вариант\n";
@@ -980,6 +1217,7 @@ void print_help_universal()
     cout << "   print [i]                               \t\tВывести [i] вариант и разобрать по переменным\n";
     cout << "   stats                                   \t\tВывести минимум и максимум branching factor среди оставшихся вариантов\n";
     cout << "   cache_stats                             \t\tСтатистика кеша остаточных формул\n";
+    cout << "   lemma_stats                             \t\tСтатистика поиска сохранённых лемм\n";
     cout << "   factor [vector]                         \t\tВывести branching factor для заданного вектора\n";
     cout << "   setposfunc [need_names] [no_names]      \t\tЗафиксировать позиционную функцию, которая будет выводиться в print\n";
     cout << "   empty_divide [i]                        \t\tПрименить empty_divide к [i] формуле (или ко всем, если i = -1)\n";
@@ -1018,6 +1256,36 @@ public:
             else ++it;
     }
 };
+
+// Only structural operations create levels. Filtering never changes ancestry.
+// Copies pin parents independently of FrontierOwner's eager reclamation.
+struct FrontierLevel {
+    using Saved = unique_ptr<CNF, decltype(&destroy_cnf)>;
+    vector<Saved> parents;
+    map<long long, set<long long>> child_parents;
+    set<long long> refined;
+    vector<int> ids;
+    vector<string> vars;
+    string introduced_name;
+
+    FrontierLevel(const vector<CNF*> &frontier,const vector<int> &known_ids,
+                  const vector<string> &known_vars,string introduced="")
+        : ids(known_ids),vars(known_vars),introduced_name(move(introduced)) {
+        for (auto *f : frontier) {
+            CNF *copy=new CNF(*f);copy->node_id=f->node_id;
+            parents.emplace_back(copy,destroy_cnf);
+        }
+    }
+    void record_ids(CNF *parent,const vector<long long> &children) {
+        for (long long id : children) child_parents[id].insert(parent->node_id);
+        if (children.size()!=1 || children[0]!=parent->node_id) refined.insert(parent->node_id);
+    }
+    void record(CNF *parent,const vector<CNF*> &children) {
+        vector<long long> ids;
+        for (auto *child : children) ids.push_back(child->node_id);
+        record_ids(parent,ids);
+    }
+};
 }
 
 void test_universal()
@@ -1041,18 +1309,23 @@ void test_universal()
 
     vector<int> ids;
     vector<string> vars;
+    vector<FrontierLevel> history;
 
     string command;
 
     print_help_universal();
 
     // double C = 1.28855;
-    double C = 1.2873;
+    double C = lemma_export_enabled() ? lemma_export_settings.q : 1.2873;
+    long double weight_target = 1.0L;
+    set_lemma_search_target(lemma_export_enabled() ? lemma_export_settings.target : "1.2873");
+    set_lemma_degree_scope(variants);
 
     while (command != "exit")
     {
         cout << "Введите команду: ";
         owner.retain(cur);
+        retain_lemma_candidates(cur);
         if (!(cin >> command)) break;
 
         if (command == "add")
@@ -1125,17 +1398,37 @@ void test_universal()
 
             if (find_if(variants.begin(), variants.end(), same_literal) == variants.end())
                 variants.push_back(literal);
+            set_lemma_degree_scope(variants);
 
             cout << "Добавлен тип (" << i << ", " << j << ")-"
                  << (literal.type == SINGLETON ? "singleton" : "any") << "\n\n";
             continue;
         }
 
-        if (command == "addpos")
+        if (command == "addpos" || command == "expose_type")
         {
             if (!root_initialized) throw invalid_argument("initialize the root with add first");
             string var_name;
             read_arguments(var_name);
+
+            LiteralDegType requested{0, 0, ANY};
+            if (command == "expose_type")
+            {
+                string type;
+                read_arguments(requested.i, requested.j, type);
+                if (type != "SINGLETON" && type != "ANY") {
+                    cout << "Ожидается expose_type NAME i j SINGLETON|ANY\n\n";
+                    continue;
+                }
+                requested.type = type == "SINGLETON" ? SINGLETON : ANY;
+                validate_degree(requested.i, requested.j, requested.type);
+                if (none_of(variants.begin(), variants.end(), [&](const auto &d) {
+                        return d.i == requested.i && d.j == requested.j && d.type == requested.type;
+                    })) {
+                    cout << "Этот тип отсутствует в текущем списке возможных литералов (sv/addlit).\n\n";
+                    continue;
+                }
+            }
 
             if (VAR2ID.count(var_name) != 0)
             {
@@ -1143,6 +1436,7 @@ void test_universal()
                 continue;
             }
 
+            FrontierLevel level(cur,ids,vars,var_name);
             Literal new_lit = Literal(var_name);
             ids.push_back(new_lit.id);
             vars.push_back(var_name);
@@ -1197,19 +1491,33 @@ void test_universal()
             }
             cout << endl;
 
-            auto _posfunc = create_pos_func(need_lits, no_lits);
+            auto _posfunc = command == "expose_type"
+                ? create_pos_func(need_lits, no_lits, [requested](const CNF &f, int index) {
+                    for (const auto &[tail, flag] : f.clauses[index]->tail_atoms)
+                        if (f.tail_exclusions.count(tail))
+                            for (const auto &d : f.tail_exclusions.at(tail))
+                                if (d[0] == requested.i && d[1] == requested.j &&
+                                    (!d[2] || requested.type == SINGLETON)) return false;
+                    return true;
+                })
+                : create_pos_func(need_lits, no_lits);
 
             vector<CNF *> new_lit_variants;
 
             for (CNF *cnf : cur)
             {
-                auto new_vars = add_new_var_in_place(cnf, var_name, _posfunc, variants);
+                vector<long long> children_ids;
+                auto new_vars = command == "expose_type"
+                    ? expose_type_in_place(cnf, var_name, _posfunc, requested, variants, &children_ids)
+                    : add_new_var_in_place(cnf, var_name, _posfunc, variants, &children_ids);
+                level.record_ids(cnf,children_ids);
                 owner.adopt(new_vars);
                 new_lit_variants.resize(new_lit_variants.size() + new_vars.size());
                 copy(new_vars.begin(), new_vars.end(), new_lit_variants.rbegin());
             }
 
             swap(cur, new_lit_variants);
+            history.push_back(move(level));
 
             cout << "В текущем рассмотрении [" << cur.size() << "] вариантов\n\n";
 
@@ -1218,11 +1526,50 @@ void test_universal()
 
         if (command == "set")
         {
-            read_arguments(C);
-            if (!isfinite(C) || C <= 1) throw invalid_argument("target must exceed 1");
+            string decimal;
+            read_arguments(decimal);
+            set_lemma_search_target(decimal);
+            double requested = stod(decimal);
+            if (!isfinite(requested) || requested <= 1) throw invalid_argument("target must exceed 1");
+            if (lemma_export_enabled() && requested != lemma_export_settings.q)
+                throw invalid_argument("a lemma-export session has a fixed target q");
+            C = requested;
 
             cout << "C = " << C << "\n\n";
 
+            continue;
+        }
+
+        if (command == "weight_target")
+        {
+            string decimal;
+            read_arguments(decimal);
+            size_t consumed = 0;
+            long double requested = stold(decimal, &consumed);
+            if (consumed != decimal.size() ||
+                decimal.find_first_not_of("0123456789.+-eE") != string::npos ||
+                !isfinite(requested) || requested <= 0)
+                throw invalid_argument("weight target must be a finite positive decimal");
+            // This controls only closing frontier cases. Recursive continuations
+            // still compete with a call of weight one; cache choices depend on q.
+            weight_target = requested;
+            cout << "Weight target = " << weight_target << "\n\n";
+            continue;
+        }
+
+        if (command == "xiao_property2" || command == "xiao_property1")
+        {
+            string value;
+            read_arguments(value);
+            if (value != "on" && value != "off")
+            {
+                cout << "Ожидается " << command << " on или " << command << " off\n\n";
+                continue;
+            }
+            if (command == "xiao_property1") MaxSATSettings.ALLOW_XIAO_PROPERTY1 = value == "on";
+            else MaxSATSettings.ALLOW_XIAO_PROPERTY2 = value == "on";
+            cout << (command == "xiao_property1" ? "Property 1: " : "Property 2: ") << value
+                 << "; imported premise: globally Xiao-reduced Step 6 instance\n\n";
             continue;
         }
 
@@ -1280,6 +1627,7 @@ void test_universal()
             }
 
             swap(new_pos_literals, variants);
+            set_lemma_degree_scope(variants);
 
             cout << "Сейчас в рассмотрении:\n";
             for(LiteralDegType lt : variants)
@@ -1350,9 +1698,41 @@ void test_universal()
             continue;
         }
 
+        if (command == "back")
+        {
+            if (history.empty()) {
+                cout << "Нет уровня для отката (addpos / empty_divide).\n\n";
+                continue;
+            }
+            auto &level=history.back();
+            set<long long> needed;
+            for (auto *child : cur) {
+                auto it=level.child_parents.find(child->node_id);
+                if (it==level.child_parents.end()) throw logic_error("frontier has no recorded parent");
+                needed.insert(it->second.begin(),it->second.end());
+            }
+            vector<long long> reopen;
+            for (long long id : needed) if (level.refined.count(id)) reopen.push_back(id);
+            global_logger.log_rollback(reopen);
+            clear_exposure_deduplication();
+            vector<CNF*> restored;
+            for (auto &parent : level.parents)
+                if (needed.count(parent->node_id)) restored.push_back(parent.release());
+            owner.adopt(restored);
+            cur.swap(restored);
+            ids=level.ids;vars=level.vars;
+            if (!level.introduced_name.empty()) {
+                auto it=VAR2ID.find(level.introduced_name);
+                if (it!=VAR2ID.end()) { ID2VAR.erase(it->second);VAR2ID.erase(it); }
+            }
+            history.pop_back();
+            cout << "Откат: осталось [" << cur.size() << "] родителей неразобранных детей.\n\n";
+            continue;
+        }
+
         if (command == "simple_branch")
         {
-            branch_epoch_universal(cur, ids, C, false, false);
+            branch_epoch_universal(cur, ids, C, false, false, 1, weight_target);
             cout << endl;
             continue;
         }
@@ -1364,14 +1744,14 @@ void test_universal()
             read_arguments(depth);
             if (depth < 0) throw invalid_argument("depth must be nonnegative");
 
-            branch_epoch_universal(cur, ids, C, false, true, depth);
+            branch_epoch_universal(cur, ids, C, false, true, depth, weight_target);
             cout << endl;
             continue;
         }
 
         if (command == "branch")
         {
-            branch_epoch_universal(cur, ids, C, true, false);
+            branch_epoch_universal(cur, ids, C, true, false, 1, weight_target);
             cout << endl;
             continue;
         }
@@ -1539,6 +1919,13 @@ void test_universal()
                  << ", evictions=" << stats.evictions << "\n\n";
             continue;
         }
+        if (command == "lemma_stats")
+        {
+            auto stats = saved_lemma_stats();
+            cout << "Saved lemmas: loaded=" << stats.loaded << ", attempts=" << stats.attempts
+                 << ", matches=" << stats.matches << "\n\n";
+            continue;
+        }
 
         if (command == "empty_divide")
         {
@@ -1547,6 +1934,7 @@ void test_universal()
 
             if (i == -1)
             {
+                FrontierLevel level(cur,ids,vars);
                 vector<CNF *> next_cur;
                 int success_count = 0;
                 
@@ -1555,6 +1943,7 @@ void test_universal()
                     DivideResult res = empty_divide(cnf, C);
                     if (res.cnf_empty != nullptr)
                     {
+                        level.record(cnf,{res.cnf_empty,res.cnf_not_empty});
                         owner.adopt({res.cnf_empty, res.cnf_not_empty});
                         next_cur.push_back(res.cnf_empty);
                         next_cur.push_back(res.cnf_not_empty);
@@ -1562,10 +1951,12 @@ void test_universal()
                     }
                     else
                     {
+                        level.record(cnf,{cnf});
                         next_cur.push_back(cnf);
                     }
                 }
                 swap(cur, next_cur);
+                if (success_count) history.push_back(move(level));
                 cout << "empty_divide успешно применен к " << success_count << " формулам.\n";
                 cout << "Теперь в рассмотрении [" << cur.size() << "] вариантов.\n\n";
             }
@@ -1656,6 +2047,11 @@ void test_universal()
         }
 
         cout << "Команда [" << command << "] не распознана\n";
+    }
+    if (lemma_export_enabled())
+    {
+        if (!root_initialized) throw invalid_argument("lemma export requires a root family");
+        finish_lemma_session(cur, ids);
     }
 }
 

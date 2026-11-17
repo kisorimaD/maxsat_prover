@@ -1,0 +1,23 @@
+{
+  "id": "step5.1",
+  "roles": [2],
+  "vector": [4, 2],
+  "proof": {
+    "kind": "decompose",
+    "transition": "assign",
+    "variable": 2,
+    "formula": [
+      [2, {"tail": 0, "kind": "any"}],
+      [2, {"tail": 1, "kind": "any"}],
+      [2, {"tail": 2, "kind": "any"}],
+      [-2],
+      [-2, {"tail": 3, "kind": "any"}]
+    ],
+    "alternatives": [
+      {"offset": 3, "decrease": 4, "formula": [],
+       "proof": {"kind": "call", "formula": []}},
+      {"offset": 2, "decrease": 2, "formula": [],
+       "proof": {"kind": "call", "formula": []}}
+    ]
+  }
+}

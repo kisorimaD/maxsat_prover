@@ -1,5 +1,7 @@
 #include "cnf.h"
 #include "strategy_cache.h"
+#include "lemmas.h"
+#include "xiao_property2.h"
 #include <algorithm>
 #include <map>
 #include <vector>
@@ -7,6 +9,14 @@
 #include <limits>
 
 using namespace std;
+
+namespace {
+struct ResolutionContext {
+    bool previous = MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT;
+    ResolutionContext() { MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT = true; }
+    ~ResolutionContext() { MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT = previous; }
+};
+}
 
 pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool val_to_set)
 {
@@ -47,7 +57,10 @@ pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool val_to_se
         }
         else
         {
-            if (new_lits_vec.size() == 1 && is_any_unknown_literal(new_lits_vec[0]))
+            // A boundary-only clause leaves the local neighbourhood but stays
+            // in the global instance. Mixed '?' / '?+' markers need the same
+            // treatment as a single marker, without any additional decrease.
+            if (all_of(new_lits_vec.begin(), new_lits_vec.end(), is_any_unknown_literal))
                 continue;
 
             Clause *new_c = new Clause(new_lits_vec, c->tail_atoms);
@@ -74,10 +87,15 @@ ProofNode CNF::xiao_branch(int depth, std::string first_var, double q)
 {
     (void)first_var;
     return cached_strategy_search(*this, StrategySearchKind::Variable, depth, q,
-                                  [&] { return xiao_branch_uncached(depth, q); });
+                                  [&] {
+        bool context = MaxSATSettings.ALLOW_XIAO_PROPERTY2;
+        bool context1 = MaxSATSettings.ALLOW_XIAO_PROPERTY1;
+        DisableXiaoProperty2 no_inherited_step6_premise;
+        return xiao_branch_uncached(depth, q, context, context1);
+    });
 }
 
-ProofNode CNF::xiao_branch_uncached(int depth, double q)
+ProofNode CNF::xiao_branch_uncached(int depth, double q, bool property2_context, bool property1_context)
 {
     // The search considers every actual pivot.  In particular, if a good
     // (3,2)-variable exists, it must be selected as that pivot; its bound
@@ -93,6 +111,13 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
     ReductionStep reduction = apply_first_reduction(*this);
     if (reduction.applied)
     {
+        ProofNode restart;
+        if (MaxSATSettings.ALLOW_POLYNOMIAL_RESTARTS) restart=polynomial_restart(*this,reduction);
+        // These resolutions can duplicate boundary literals. Do not reuse
+        // degree-conditional saved lemmas under the old hidden-degree scope.
+        std::unique_ptr<ResolutionContext> resolution_scope;
+        if (reduction.rule == "RR10" || reduction.rule == "RR11")
+            resolution_scope = std::make_unique<ResolutionContext>();
         ProofNode child_node;
         if (reduction.decrease == 0)
         {
@@ -103,20 +128,26 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
         }
         else
         {
-            // The reduction edge itself accounts for the decrease.  Its
-            // child is a recursive call, not another copy of that decrease.
+            // The edge accounts for the decrease. A call is the fallback;
+            // inside the explicit resolution arm the budget may permit a
+            // further improving continuation.
             child_node = ProofNode({0});
             child_node.tau = 100.0;
             child_node.formula_snapshot = reduction.cnf->get_cert_snapshot();
+            if (depth > 0 && MaxSATSettings.LEMMA3_RESOLUTION_CONTEXT)
+            {
+                auto continuation = reduction.cnf->xiao_branch(depth - 1, "", q);
+                if (branching_weight(continuation.vec, q) < 1.0L)
+                    child_node = std::move(continuation);
+            }
         }
 
         ProofNode parent;
         parent.type = "reduction";
         parent.rule = reduction.rule;
         parent.pivot_id = reduction.pivot_id;
-        parent.vec = reduction.decrease == 0
-                         ? child_node.vec
-                         : vector<int>{reduction.decrease};
+        parent.vec = child_node.vec;
+        for (int &d : parent.vec) d += reduction.decrease;
         parent.tau = reduction.decrease == 0
                          ? child_node.tau
                          : branching_factor(parent.vec);
@@ -124,6 +155,7 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
         parent.rr_witness_clauses = reduction.witness_clauses;
         parent.children.push_back(child_node);
         destroy_cnf(reduction.cnf);
+        if (restart.type=="restart" && branching_weight(parent.vec,q)>=1.0L) return restart;
         return parent;
     }
 
@@ -176,37 +208,60 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
         }
     }
 
-    // Step 5.1.  This is a different case from Lemma 4: a unit clause
-    // contains the minority literal of a (3,2)-variable.  Direct branching
-    // removes the unit clause as well in the dominant branch and gives
-    // (4,2), not (5,2).
-    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+    // Proof-backed local lemmas are available even with assumptions off.
+    // The generator records a leaf; assembly supplies its constructive tree.
+    for (const LemmaApplication &application : find_proved_lemma_applications(
+             *this, q, int(property1_context) | (2 * int(property2_context))))
     {
-        for (auto const &[id, s] : stats)
+        long double weight = branching_weight(application.vector, q);
+        if (weight < granted || (weight == granted && granted_node.type == "leaf" && !granted_node.rule.empty()))
         {
-            bool has_positive_dominant_case =
-                s.pos_count == 3 && s.neg_count == 2 && s.neg_unit_count >= 1;
-            bool has_negative_dominant_case =
-                s.neg_count == 3 && s.pos_count == 2 && s.pos_unit_count >= 1;
-
-            if (has_positive_dominant_case || has_negative_dominant_case)
-            {
-                vector<int> step51_branch = {4, 2};
-                long double f = branching_weight(step51_branch, q);
-                if (f < granted)
-                {
-                    granted = f;
-                    granted_node.vec = step51_branch;
-                    granted_node.tau = branching_factor(granted_node.vec);
-                    granted_node.rule = "step5.1";
-                    granted_node.pivot_id = id;
-                    granted_node.formula_snapshot = this->get_cert_snapshot();
-                }
-            }
+            granted = weight;
+            granted_node = lemma_application_leaf(*this, application);
         }
     }
 
     if (depth == 0) return granted_node;
+
+    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS && MaxSATSettings.ALLOW_LEMMA3_SPLIT)
+    {
+        for (const auto &[id, s] : stats)
+        {
+            if (!((s.pos_count == 2 && s.neg_count == 1) ||
+                  (s.pos_count == 1 && s.neg_count == 2))) continue;
+            int long_decrease = 0;
+            unique_ptr<CNF, decltype(&destroy_cnf)> residual(
+                lemma3_resolution(*this, id, long_decrease), destroy_cnf);
+            if (!residual) continue;
+            ProofNode child;
+            {
+                ResolutionContext context;
+                child = residual->xiao_branch(depth - 1, "", q);
+            }
+            if (branching_weight(child.vec, q) >= 1.0L)
+            {
+                child = ProofNode({0});
+                child.formula_snapshot = residual->get_cert_snapshot();
+            }
+            vector<int> branch = {long_decrease};
+            for (int d : child.vec) branch.push_back(1 + d);
+            // Xiao's statement is a disjunction: a >=1 reduction OR the
+            // displayed branching. Its unknown reduction case must remain.
+            vector<int> worst = branching_weight(branch, q) >= branching_weight({1}, q)
+                                    ? branch : vector<int>{1};
+            long double weight = branching_weight(worst, q);
+            if (weight < granted)
+            {
+                granted = weight;
+                granted_node = ProofNode(worst);
+                granted_node.type = "lemma3_split";
+                granted_node.pivot_id = id;
+                granted_node.lemma3_long_decrease = long_decrease;
+                granted_node.formula_snapshot = get_cert_snapshot();
+                granted_node.children.push_back(std::move(child));
+            }
+        }
+    }
 
     // --- Branching ---
     ProofNode best_node;
@@ -247,14 +302,53 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
         ProofNode selected0 = branching_weight(child0_res.vec, q) < 1.0L
                                   ? child0_res : stop0_res;
         vector<int> current_branching;
-        for (int el : selected1.vec) current_branching.push_back(reduced_cnt1 + el);
-        for (int el : selected0.vec) current_branching.push_back(reduced_cnt0 + el);
+        std::vector<bool> imported_sides(2, false);
+        std::vector<bool> imported1(2, false);
+        auto eligible = property2_context && MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS
+                            ? xiao_property2_sides(*this, var_id)
+                            : std::array<bool, 2>{false, false};
+        auto eligible1 = property1_context && MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS
+                            ? xiao_property1_sides(*this, var_id)
+                            : std::array<bool, 2>{false, false};
+        std::vector<int> property_vector = branching_weight({11, 3}, q) >=
+                                         branching_weight({11, 10, 4}, q)
+                                             ? std::vector<int>{11, 3}
+                                             : std::vector<int>{11, 10, 4};
+        auto append_side = [&](int side, ProofNode &selected, const ProofNode &stop, int decrease) {
+            std::vector<int> ordinary;
+            for (int d : selected.vec) ordinary.push_back(decrease + d);
+            if (eligible[side] && branching_weight(property_vector, q) < branching_weight(ordinary, q))
+            {
+                imported_sides[side] = true;
+                selected = stop;
+                current_branching.insert(current_branching.end(), property_vector.begin(), property_vector.end());
+            }
+            else current_branching.insert(current_branching.end(), ordinary.begin(), ordinary.end());
+            // Property 1 is a complete bound for this assignment arm, measured
+            // before assigning the pivot, just like Property 2.
+            std::vector<int> p1 = {18, 11, 11, 4};
+            const auto &previous = imported_sides[side] ? property_vector : ordinary;
+            if (eligible1[side] && branching_weight(p1, q) < branching_weight(previous, q))
+            {
+                current_branching.resize(current_branching.size() - previous.size());
+                current_branching.insert(current_branching.end(), p1.begin(), p1.end());
+                imported_sides[side] = false;
+                imported1[side] = true;
+                selected = stop;
+            }
+        };
+        append_side(0, selected1, stop1_res, reduced_cnt1);
+        append_side(1, selected0, stop0_res, reduced_cnt0);
         long double current_weight = branching_weight(current_branching, q);
         if (!any_var_processed || current_weight < min_weight)
         {
             min_weight = current_weight;
             any_var_processed = true;
-            best_node.type = "branch";
+            best_node.type = imported_sides[0] || imported_sides[1] ? "xiao_property2_branch" : "branch";
+            if (imported1[0] || imported1[1]) best_node.type = "xiao_property1_branch";
+            best_node.property2_sides = imported_sides;
+            best_node.property1_sides = imported1;
+            best_node.property1_scope = lemma_current_degree_scope();
             best_node.pivot_id = var_id;
             best_node.vec = move(current_branching);
             best_node.tau = branching_factor(best_node.vec);
