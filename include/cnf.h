@@ -51,7 +51,6 @@ struct ProofNode {
     // Imported branching case serialized independently of the bound at q.
     std::vector<int> assumption_branch_vector;
    
-    int target_clause_idx = -1; // Для узла empty_divide
     std::vector<std::vector<int>> cover_groups; // grouped branching may overlap
     std::vector<std::vector<int>> formula_snapshot; 
     
@@ -194,7 +193,6 @@ public:
     ProofNode branch_group(vector<int> ids, int max_groups = -1,
                            bool construct_proof = false, double q = 1.2873);
 
-    ProofNode xiao_branch(int depth, double q = 1.2873);
 
     std::vector<std::vector<int>> get_snapshot();
     std::vector<std::vector<int>> get_cert_snapshot() const;
@@ -204,7 +202,6 @@ public:
     vector<Clause *> clauses;
 
 private:
-    ProofNode xiao_branch_uncached(int depth, double q);
 };
 
 struct GroupResidual
@@ -236,20 +233,7 @@ struct ReductionFixpoint
     vector<ReductionStep> steps;
 };
 
-struct DirectLemmaResult
-{
-    bool applied = false;
-    string rule;
-    int pivot_id = -1;
-    int second_pivot_id = -1;
-    int local_D = -1;
-    int pos_count = -1;
-    int neg_count = -1;
-    vector<int> vec;
-};
-
 bool is_any_unknown_literal(const Literal *l);
-pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool value);
 map<int, FormulaVarStats> analyze_formula(const CNF &cnf);
 GroupResidual materialize_group_residual(const CNF &cnf,
                                          const vector<int> &ids,
@@ -259,14 +243,11 @@ Literal *intern_literal(int id, bool inv);
 ReductionStep apply_first_reduction(const CNF &cnf);
 ReductionStep apply_named_reduction(const CNF &cnf, const string &rule);
 ReductionFixpoint reduce_to_fixpoint(const CNF &cnf);
-DirectLemmaResult find_best_direct_lemma23(const CNF &cnf, double q = 1.2873);
-vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf);
 
 struct DivideResult {
     int clause_idx = -1;
     CNF* cnf_empty = nullptr;
     CNF* cnf_not_empty = nullptr;
-    ProofNode proof_tree; // Общий предок, связывающий два поддерева
 };
 
 

@@ -93,17 +93,14 @@ StrategyCacheStats strategy_cache_stats()
     return stats;
 }
 
-ProofNode cached_strategy_search(const CNF &formula, StrategySearchKind kind,
-                                int depth, double q,
+ProofNode cached_strategy_search(const CNF &formula, double q,
                                 const std::function<ProofNode()> &search)
 {
-    if (depth < 0 || !std::isfinite(q) || q <= 1.0)
-        throw std::invalid_argument("invalid strategy search depth or target");
+    if (!std::isfinite(q) || q <= 1.0)
+        throw std::invalid_argument("invalid strategy search target");
     if (!cache_enabled) return search();
 
     std::string key;
-    append(key, kind);
-    append(key, depth);
     append(key, q);
     append(key, MaxSATSettings.MAXIMUM_CLAUSE_SIZE);
     append(key, MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS);
@@ -161,30 +158,4 @@ ProofNode cached_strategy_search(const CNF &formula, StrategySearchKind kind,
         retained_nodes += nodes;
     }
     return proof;
-}
-
-ProofNode analyze_residual(const CNF &formula, int depth, double q)
-{
-    return cached_strategy_search(formula, StrategySearchKind::Residual, depth, q, [&] {
-        ReductionFixpoint reduced = reduce_to_fixpoint(formula);
-        std::unique_ptr<CNF, decltype(&destroy_cnf)> owner(reduced.cnf, destroy_cnf);
-        ProofNode child({0});
-        child.formula_snapshot = reduced.cnf->get_cert_snapshot();
-        if (reduced.total_decrease == 0)
-            child = reduced.cnf->xiao_branch(depth, q);
-        for (auto it = reduced.steps.rbegin(); it != reduced.steps.rend(); ++it)
-        {
-            ProofNode parent;
-            parent.type = "reduction";
-            parent.rule = it->rule;
-            parent.pivot_id = it->pivot_id;
-            parent.formula_snapshot = it->formula_snapshot;
-            parent.vec = child.vec;
-            for (int &decrease : parent.vec) decrease += it->decrease;
-            parent.tau = branching_factor(parent.vec);
-            parent.children.push_back(std::move(child));
-            child = std::move(parent);
-        }
-        return child;
-    });
 }

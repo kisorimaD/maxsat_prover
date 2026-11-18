@@ -201,16 +201,6 @@ std::string CertLogger::proof_node_to_json(const ProofNode &node)
         return ss.str();
     }
 
-    if (node.type == "divide_clause" && node.children.size() == 2)
-    {
-        ss << "{\"kind\":\"refine\",\"rule\":\"tail_empty_or_nonempty\""
-           << ",\"formula\":" << formula
-           << ",\"clause\":" << node.target_clause_idx
-           << ",\"children\":[" << proof_node_to_json(node.children[0])
-           << ',' << proof_node_to_json(node.children[1]) << "]}";
-        return ss.str();
-    }
-
     throw std::logic_error("Cannot serialize an incomplete proof node: " + node.type);
 
 }

@@ -9,7 +9,7 @@ from stitch_certificate import assemble_certificate
 from verifier.check import load_and_check
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class GeneratorTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class GeneratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             cwd = Path(directory)
             result = subprocess.run(
-                [str(ROOT / "maxsat_prover"), "test"],
+                [str(ROOT / "maxsat_prover"), "interactive"],
                 input="set 2\nassumptions off\nadd x 3 2 ANY\nsimple_branch\nexit\n",
                 text=True, capture_output=True, cwd=cwd, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -37,7 +37,7 @@ class GeneratorTests(unittest.TestCase):
     def test_incomplete_generation_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             cwd = Path(directory)
-            result = subprocess.run([str(ROOT / "maxsat_prover"), "test"],
+            result = subprocess.run([str(ROOT / "maxsat_prover"), "interactive"],
                                     input="add x 3 2 ANY\nexit\n", text=True,
                                     capture_output=True, cwd=cwd, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)

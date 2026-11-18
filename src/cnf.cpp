@@ -1,6 +1,6 @@
 #include "cnf.h"
 #include "cert_logger.h"
-#include "strategy_cache.h"
+#include "residual_search.h"
 #include "group_cover.h"
 
 #include <algorithm>
@@ -855,41 +855,21 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
 
         if (group_subst_masks.size() >= 2 && MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
         {
-            for (const DirectLemmaResult &lemma :
-                 find_direct_lemma23_candidates(*group_residual.cnf))
+            for (const ImportedLemma &lemma :
+                 imported_lemma_candidates(analyze_formula(*group_residual.cnf)))
             {
                 GroupWitness witness;
                 witness.rule = lemma.rule;
-                witness.claimed_vector = lemma.vec;
-                extra_choices.push_back({reduction_or_branch_bound(lemma.vec, q), witness});
-            }
-            // Statistics count clauses after representative substitutions,
-            // including deduplication of merged literals.
-            for (const auto &[id, stats] : analyze_formula(*group_residual.cnf))
-            {
-                int pos = stats.pos_count, neg = stats.neg_count;
-                if (pos < 2 || neg < 2) continue;
-                // Lemma 4: i >= j >= 2 and at least j-1 unit clauses
-                // on the i-occurrence side give the vector (i, 2j+1).
-                for (int direction = 0; direction < 2; ++direction)
-                {
-                    int j = direction == 0 ? neg : pos;
-                    int i = direction == 0 ? pos : neg;
-                    int units = direction == 0 ? stats.pos_unit_count : stats.neg_unit_count;
-                    if (i < j || units < j - 1) continue;
-                    GroupWitness witness;
-                    witness.rule = "lemma4";
-                    witness.claimed_vector = {i, 2 * j + 1};
-                    extra_choices.push_back({
-                        reduction_or_branch_bound(witness.claimed_vector, q), witness});
-                }
+                witness.claimed_vector = lemma.branch_vector;
+                extra_choices.push_back({
+                    reduction_or_branch_bound(lemma.branch_vector, q), move(witness)});
             }
         }
 
         // Each group is analyzed once. Shared residual formulas still go through
         // the formula cache, independent of their assignment images.
         auto residual_proof = make_shared<ProofNode>(
-            analyze_residual(*group_residual.cnf, 1, q));
+            analyze_residual(*group_residual.cnf, q));
         GroupWitness search_witness;
         search_witness.rule = "residual_search";
         search_witness.claimed_vector = residual_proof->vec;
@@ -922,9 +902,12 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
     });
 
     GroupCover cover = minimum_group_cover(masks.size(), weighted, max_groups);
-    ProofNode direct_child_search = this->xiao_branch(1, q);
-    if (cover.groups.empty() || branching_weight(direct_child_search.vec, q) < cover.weight)
-        return direct_child_search;
+    if (cover.groups.empty())
+    {
+        ProofNode call({0});
+        call.formula_snapshot = get_cert_snapshot();
+        return call;
+    }
 
     ProofNode node;
     node.type = construct_proof ? "enumeration" : "leaf";
@@ -1512,33 +1495,9 @@ DivideResult empty_divide(CNF *cnf, double q)
         }
     }
 
-    auto best_weight = [&](CNF *candidate)
+    auto child_weight = [&](CNF *candidate)
     {
-        long double result;
-        {
-            ProofNode node = candidate->xiao_branch(1, q);
-            result = branching_weight(node.vec, q);
-        }
-        {
-            ProofNode node = candidate->branch_group(ids, -1, false, q);
-            result = min(result, branching_weight(node.vec, q));
-        }
-        return result;
-    };
-
-    auto best_proof = [&](CNF *candidate)
-    {
-        long double xiao_weight;
-        {
-            ProofNode node = candidate->xiao_branch(1, q);
-            xiao_weight = branching_weight(node.vec, q);
-        }
-        {
-            ProofNode group_node = candidate->branch_group(ids, -1, false, q);
-            if (branching_weight(group_node.vec, q) <= xiao_weight)
-                return candidate->branch_group(ids, -1, true, q);
-        }
-        return candidate->xiao_branch(1, q);
+        return branching_weight(candidate->branch_group(ids, -1, false, q).vec, q);
     };
 
     for (int i = 0; i < (int)cnf->clauses.size(); ++i)
@@ -1562,8 +1521,8 @@ DivideResult empty_divide(CNF *cnf, double q)
                 nonempty = true;
 
             // Худший случай при данном разбиении
-            long double worst_weight = max(best_weight(cnf_empty),
-                                           best_weight(cnf_not_empty));
+            long double worst_weight = max(child_weight(cnf_empty),
+                                           child_weight(cnf_not_empty));
 
             if (worst_weight < min_worst_weight)
             {
@@ -1591,21 +1550,8 @@ DivideResult empty_divide(CNF *cnf, double q)
 
     if (best_split.cnf_empty && best_split.cnf_not_empty)
     {
-        // Build the potentially large proof trees only once, for the split
-        // which survived the numerical first pass.
-        best_split.proof_tree.type = "divide_clause";
-        best_split.proof_tree.target_clause_idx = best_split.clause_idx;
-        best_split.proof_tree.formula_snapshot = cnf->get_cert_snapshot();
-        best_split.proof_tree.children.push_back(
-            best_proof(best_split.cnf_empty));
-        best_split.proof_tree.children.push_back(
-            best_proof(best_split.cnf_not_empty));
-        best_split.proof_tree.tau = max(
-            best_split.proof_tree.children[0].tau,
-            best_split.proof_tree.children[1].tau);
-
         global_logger.log_divide(cnf->node_id, cnf->get_cert_snapshot(),
-                                 best_split.proof_tree.target_clause_idx,
+                                 best_split.clause_idx,
                                  best_split.cnf_empty->node_id,
                                  best_split.cnf_not_empty->node_id);
     }

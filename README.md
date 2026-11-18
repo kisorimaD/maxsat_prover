@@ -2,7 +2,8 @@
 
 A certificate generator for the `(3,2)`-literal bottleneck in the MaxSAT
 branching analysis described in `.docs/main.pdf`. The C++ search enumerates
-local templates and chooses assignment, grouping and reduction strategies.
+local templates, enumerates assignments, and searches for groups with cheap
+continuations on their residual formulas.
 An independent Python checker validates coverage, local optimum identities
 and the branching inequality using exact rational arithmetic.
 
@@ -24,13 +25,13 @@ ignored by Git. The steps can also be run separately:
 
 ```sh
 make
-./maxsat_prover test < solve.txt
+./maxsat_prover interactive < solve.txt
 python3 stitch_certificate.py pre_certificate.jsonl proof_tree.json
 python3 verify_certificate.py proof_tree.json verification_assumptions.json
 ```
 
-Starting `maxsat_prover test` overwrites `pre_certificate.jsonl`. The other
-entry points, including tests and `--help`, preserve it. `make certificate`
+Starting `maxsat_prover interactive` overwrites `pre_certificate.jsonl`. The
+test suite and `--help` preserve it. `make certificate`
 also overwrites the assembled certificate and assumption log.
 
 ## Verification contract
@@ -75,10 +76,11 @@ are supported. Old v1 certificates and numeric tail shorthands must be regenerat
 ```sh
 make check
 ./maxsat_prover --help
-./maxsat_prover test
+./maxsat_prover interactive
 ```
 
-`make check` runs C++ checks and Python unit/integration tests. `make certificate`
+`make check` runs the separate C++ test executable and Python tests in `tests/`.
+`make certificate`
 is the separate full experiment. The interactive interface remains available
 for diagnostics; `help` lists its commands. Set `assumptions off` to exclude
 imported lemmas from search; constructive Step 5.1 remains available. The current
