@@ -1,4 +1,4 @@
-from itertools import permutations, product
+from itertools import permutations
 
 MAX_CLAUSES = 32767
 
@@ -13,10 +13,8 @@ def _literal(value):
             and type(value[1]) is int and value[2] in ("any", "nonempty")):
         return value
     if type(value) is int:
-        if value in (0, 1):
-            # Kept only for small legacy unit tests.  Real certificates use
-            # stable tail objects.
-            return ("tail", value, "nonempty" if value == 1 else "any")
+        if abs(value) < 2:
+            raise ValueError("ordinary variables must have IDs at least 2; use typed tails")
         return value
     if (isinstance(value, dict) and set(value) == {"tail", "kind"}
             and type(value["tail"]) is int
@@ -66,10 +64,6 @@ def ordered_formula(value):
 
 def is_tail(literal):
     return type(literal) is tuple and len(literal) == 3 and literal[0] == "tail"
-
-
-def contains_tail(formula):
-    return any(is_tail(literal) for clause in formula for literal in clause)
 
 
 def tail_ids(formula):
@@ -127,37 +121,7 @@ def canonical_formula(formula):
     return best if best is not None else formula
 
 
-def satisfied_clauses(formula, assignment, boundary):
-    total = 0
-    for clause in formula:
-        clause_true = False
-        for literal in clause:
-            if is_tail(literal):
-                clause_true |= boundary[literal[1]]
-            else:
-                value = assignment[abs(literal)]
-                clause_true |= value != (literal < 0)
-            if clause_true:
-                break
-        total += clause_true
-    return total
-
-
-def optimum(formula, boundary=None):
-    formula = normalize_formula(formula) if isinstance(formula, list) else formula
-    boundary = {} if boundary is None else boundary
-    missing = set(tail_ids(formula)) - set(boundary)
-    if missing:
-        raise ValueError(f"missing boundary values for tails {sorted(missing)}")
-    ids = variables(formula)
-    best = 0
-    for values in product((False, True), repeat=len(ids)):
-        assignment = dict(zip(ids, values))
-        best = max(best, satisfied_clauses(formula, assignment, boundary))
-    return best
-
-
-def assignment_residual(formula, variable, value, keep_tail_only=False):
+def assignment_residual(formula, variable, value):
     result = []
     offset = decrease = 0
     for clause in formula:
@@ -174,7 +138,7 @@ def assignment_residual(formula, variable, value, keep_tail_only=False):
             decrease += 1
         elif not remaining:
             decrease += 1
-        elif all(is_tail(literal) for literal in remaining) and not keep_tail_only:
+        elif all(is_tail(literal) for literal in remaining):
             # It leaves the bounded neighbourhood but remains in the global
             # recursive instance, hence does not contribute to decrease.
             pass
@@ -184,15 +148,9 @@ def assignment_residual(formula, variable, value, keep_tail_only=False):
                         key=lambda c: tuple(_key(x) for x in c))), offset, decrease
 
 
-def all_boundary_assignments(*formulas):
-    ids = sorted(set().union(*(set(tail_ids(formula)) for formula in formulas)))
-    for values in product((False, True), repeat=len(ids)):
-        yield dict(zip(ids, values))
-
-
 def replace_tail(formula, clause_index, replacement):
     result = [list(clause) for clause in formula]
-    if not 0 <= clause_index < len(result):
+    if type(clause_index) is not int or not 0 <= clause_index < len(result):
         raise ValueError("tail split clause out of range")
     candidates = [literal for literal in result[clause_index]
                   if is_tail(literal) and literal[2] == "any"]

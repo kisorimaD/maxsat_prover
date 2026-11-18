@@ -47,7 +47,7 @@ pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool val_to_se
         }
         else
         {
-            if (new_lits_vec.size() == 1 && is_any_unknown_literal(new_lits_vec[0]))
+            if (all_of(new_lits_vec.begin(), new_lits_vec.end(), is_any_unknown_literal))
                 continue;
 
             Clause *new_c = new Clause(new_lits_vec, c->tail_atoms);
@@ -57,22 +57,8 @@ pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool val_to_se
     return {satisfied_cnt, new_cnf};
 }
 
-// std::vector<std::vector<int>> CNF::get_snapshot() {
-//     std::vector<std::vector<int>> snap;
-//     for (Clause* c : clauses) {
-//         std::vector<int> cl_snap;
-//         for (Literal* l : c->lits) {
-//             if (is_any_unknown_literal(l)) cl_snap.push_back(l->id);
-//             else cl_snap.push_back((l->inv ? -1 : 1) * l->id);
-//         }
-//         snap.push_back(cl_snap);
-//     }
-//     return snap;
-// }
-
-ProofNode CNF::xiao_branch(int depth, std::string first_var, double q)
+ProofNode CNF::xiao_branch(int depth, double q)
 {
-    (void)first_var;
     return cached_strategy_search(*this, StrategySearchKind::Variable, depth, q,
                                   [&] { return xiao_branch_uncached(depth, q); });
 }
@@ -99,7 +85,7 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
             // RR7 and RR9 preserve the number of clauses but eliminate a
             // variable.  Continue on the transformed formula instead of
             // returning the meaningless branching vector (0).
-            child_node = reduction.cnf->xiao_branch(depth, "", q);
+            child_node = reduction.cnf->xiao_branch(depth, q);
         }
         else
         {
@@ -121,7 +107,6 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
                          ? child_node.tau
                          : branching_factor(parent.vec);
         parent.formula_snapshot = this->get_cert_snapshot();
-        parent.rr_witness_clauses = reduction.witness_clauses;
         parent.children.push_back(child_node);
         destroy_cnf(reduction.cnf);
         return parent;
@@ -130,18 +115,20 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
     // Lemmas 2 and 3 apply to arbitrary child formulas, not only to affine
     // residuals produced by group branching.  Keeping this before the depth
     // cutoff is essential: a depth-1 branch must see the lemma in its child.
-    DirectLemmaResult direct_lemma;
-    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
-        direct_lemma = find_best_direct_lemma23(*this, q);
-    if (direct_lemma.applied && branching_weight(direct_lemma.vec, q) < granted)
+    auto consider_import = [&](const string &rule, int pivot, const vector<int> &branch_vector)
     {
-        granted = branching_weight(direct_lemma.vec, q);
-        granted_node.vec = direct_lemma.vec;
-        granted_node.tau = direct_lemma.tau;
-        granted_node.rule = direct_lemma.rule;
-        granted_node.pivot_id = direct_lemma.pivot_id;
-        granted_node.formula_snapshot = this->get_cert_snapshot();
-    }
+        vector<int> bound = reduction_or_branch_bound(branch_vector, q);
+        long double weight = branching_weight(bound, q);
+        if (weight < granted)
+        {
+            granted = weight;
+            granted_node = ProofNode(std::move(bound));
+            granted_node.rule = rule;
+            granted_node.pivot_id = pivot;
+            granted_node.formula_snapshot = get_cert_snapshot();
+            granted_node.assumption_branch_vector = branch_vector;
+        }
+    };
 
     // Step 4 / Lemma 4.
     // For an (i,j)-literal a, the unit clauses must contain a itself
@@ -149,24 +136,16 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
     // branching vector is (i, 2j+1), where i >= j >= 2.
     if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
     {
+        DirectLemmaResult direct_lemma = find_best_direct_lemma23(*this, q);
+        if (direct_lemma.applied)
+            consider_import(direct_lemma.rule, direct_lemma.pivot_id, direct_lemma.vec);
+
         for (auto const &[id, s] : stats)
         {
             auto try_lemma4 = [&](int i, int j, int unit_count)
             {
                 if (i >= j && j >= 2 && unit_count >= j - 1)
-                {
-                    vector<int> step4_branch = {i, 2 * j + 1};
-                    long double f = branching_weight(step4_branch, q);
-                    if (f < granted)
-                    {
-                        granted = f;
-                        granted_node.vec = step4_branch;
-                        granted_node.tau = branching_factor(granted_node.vec);
-                        granted_node.rule = "lemma4";
-                        granted_node.pivot_id = id;
-                        granted_node.formula_snapshot = this->get_cert_snapshot();
-                    }
-                }
+                    consider_import("lemma4", id, {i, 2 * j + 1});
             };
 
             // a is the positive literal.
@@ -180,29 +159,34 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
     // contains the minority literal of a (3,2)-variable.  Direct branching
     // removes the unit clause as well in the dominant branch and gives
     // (4,2), not (5,2).
-    if (MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
+    for (auto const &[id, s] : stats)
     {
-        for (auto const &[id, s] : stats)
-        {
-            bool has_positive_dominant_case =
-                s.pos_count == 3 && s.neg_count == 2 && s.neg_unit_count >= 1;
-            bool has_negative_dominant_case =
-                s.neg_count == 3 && s.pos_count == 2 && s.pos_unit_count >= 1;
+        bool positive_dominant = s.pos_count == 3 && s.neg_count == 2 && s.neg_unit_count >= 1;
+        bool negative_dominant = s.neg_count == 3 && s.pos_count == 2 && s.pos_unit_count >= 1;
+        if (!positive_dominant && !negative_dominant) continue;
 
-            if (has_positive_dominant_case || has_negative_dominant_case)
-            {
-                vector<int> step51_branch = {4, 2};
-                long double f = branching_weight(step51_branch, q);
-                if (f < granted)
-                {
-                    granted = f;
-                    granted_node.vec = step51_branch;
-                    granted_node.tau = branching_factor(granted_node.vec);
-                    granted_node.rule = "step5.1";
-                    granted_node.pivot_id = id;
-                    granted_node.formula_snapshot = this->get_cert_snapshot();
-                }
-            }
+        auto [true_decrease, true_cnf] = apply_xiao_assignment(this, id, true);
+        auto [false_decrease, false_cnf] = apply_xiao_assignment(this, id, false);
+        ProofNode candidate({true_decrease, false_decrease});
+        candidate.type = "branch";
+        candidate.pivot_id = id;
+        candidate.formula_snapshot = get_cert_snapshot();
+        candidate.reduced_cnt_true = true_decrease;
+        candidate.reduced_cnt_false = false_decrease;
+        candidate.offset_true = s.pos_count;
+        candidate.offset_false = s.neg_count;
+        for (CNF *residual : {true_cnf, false_cnf})
+        {
+            ProofNode call({0});
+            call.formula_snapshot = residual->get_cert_snapshot();
+            candidate.children.push_back(std::move(call));
+            destroy_cnf(residual);
+        }
+        long double weight = branching_weight(candidate.vec, q);
+        if (weight < granted)
+        {
+            granted = weight;
+            granted_node = std::move(candidate);
         }
     }
 
@@ -230,13 +214,13 @@ ProofNode CNF::xiao_branch_uncached(int depth, double q)
         };
         // Ветвь 1: x = 1
         auto [reduced_cnt1, new_cnf1] = apply_xiao_assignment(this, var_id, true);
-        ProofNode child1_res = new_cnf1->xiao_branch(depth - 1, "", q);
+        ProofNode child1_res = new_cnf1->xiao_branch(depth - 1, q);
         ProofNode stop1_res({0});
         stop1_res.formula_snapshot = new_cnf1->get_cert_snapshot();
 
         // Ветвь 2: x = 0
         auto [reduced_cnt0, new_cnf0] = apply_xiao_assignment(this, var_id, false);
-        ProofNode child0_res = new_cnf0->xiao_branch(depth - 1, "", q);
+        ProofNode child0_res = new_cnf0->xiao_branch(depth - 1, q);
         ProofNode stop0_res({0});
         stop0_res.formula_snapshot = new_cnf0->get_cert_snapshot();
 

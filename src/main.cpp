@@ -15,10 +15,9 @@ void print_help()
     cout << "./maxsat_prover [test_name]\n\n";
     cout << "Available tests:\n";
     cout << "basic\tBasic clauses\n";
-    cout << "2branch\tTests all variants with 2 vars (x, y) (3,2)-literals\n";
-    cout << "3branch\tTests all variants with 3 vars (x, y, z) (3,2)-literals\n";
     cout << "factor\tTests factor branch computing\n";
     cout << "weight\tCheck fixed-target strategy selection\n";
+    cout << "step51\tCheck constructive Step 5.1 in both polarities\n";
     cout << "cache\tCheck residual formula caching\n";
     cout << "cover\tCheck substitution groups and weighted covers\n";
     cout << "subset\tInteractive test for subset func\n";
@@ -26,24 +25,21 @@ void print_help()
     cout << "nounknown\tTest no unknown literals\n";
     cout << "test\tInteractive test for branching etc.\n";
     cout << "reductions\tCheck constructive reductions\n";
-    cout << "groups3\tCheck precomputed groups\n";
     cout << "safety\tCheck bounds and exposure preconditions\n";
 }
 
 void fill_test_names()
 {
     test_names["basic"] = test_basics;
-    test_names["2branch"] = test_branch_two_vars;
-    test_names["3branch"] = test_branch_three_vars;
     test_names["factor"] = test_branching_factor;
     test_names["weight"] = test_weighted_search;
+    test_names["step51"] = test_step51;
     test_names["cache"] = test_strategy_cache;
     test_names["cover"] = test_group_cover;
     test_names["subset"] = test_subset_func;
     test_names["addvar"] = test_add_new_var;
     test_names["nounknown"] = test_no_unknown_literal;
     test_names["test"] = test_universal;
-    test_names["groups3"] = test_groups3_validity;
     test_names["reductions"] = test_constructive_reductions;
     test_names["safety"] = test_safety;
 

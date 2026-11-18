@@ -24,4 +24,13 @@ $(BINDIR):
 clean:
 	rm -rf $(BINDIR) $(EXE)
 
-.PHONY: clean all
+check: $(EXE)
+	@set -e; for test in basic factor weight cache cover reductions safety step51; do ./$(EXE) $$test; done
+	python3 -m unittest discover -v
+
+certificate: $(EXE)
+	./$(EXE) test < solve.txt
+	python3 stitch_certificate.py pre_certificate.jsonl proof_tree.json
+	python3 verify_certificate.py proof_tree.json
+
+.PHONY: clean all check certificate

@@ -591,7 +591,6 @@ vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf)
         candidate.pos_count = pos;
         candidate.neg_count = neg;
         candidate.vec = vec;
-        candidate.tau = branching_factor(vec);
         candidates.push_back(candidate);
     };
 
@@ -629,8 +628,9 @@ vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf)
         }
     }
 
-    // The Step 5.5 cascade already used by the group search: after applying
-    // Lemma 3 to one unit (2,1)-singleton, the second one remains available.
+    // In the branching case of Step 5.5, the resolution child preserves the
+    // second singleton. Its reduction alternative gives (2,8), dominated by
+    // (2,9,8). A reduction at the first step is covered separately by (1).
     if (unit_singletons.size() >= 2)
     {
         int first = unit_singletons[0];
@@ -647,17 +647,20 @@ vector<DirectLemmaResult> find_direct_lemma23_candidates(const CNF &cnf)
 DirectLemmaResult find_best_direct_lemma23(const CNF &cnf, double q)
 {
     DirectLemmaResult best;
+    long double best_weight = branching_weight({}, q);
     for (const DirectLemmaResult &candidate :
          find_direct_lemma23_candidates(cnf))
     {
-        bool strictly_better = !best.applied ||
-                               branching_weight(candidate.vec, q) < branching_weight(best.vec, q);
+        long double weight = branching_weight(reduction_or_branch_bound(candidate.vec, q), q);
         bool step55_tie = best.applied &&
                           candidate.rule == "double_lemma3" &&
                           best.rule == "lemma3" &&
-                          branching_weight(candidate.vec, q) == branching_weight(best.vec, q);
-        if (strictly_better || step55_tie)
+                          weight == best_weight;
+        if (weight < best_weight || step55_tie)
+        {
             best = candidate;
+            best_weight = weight;
+        }
     }
     return best;
 }

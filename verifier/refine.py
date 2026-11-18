@@ -7,15 +7,14 @@ from .formula import (is_tail, normalize_formula, ordered_formula,
 POSSIBLE_DEGREES = (
     (3, 1, True), (2, 2, False), (3, 2, False), (2, 3, False), (4, 1, True),
 )
-LEGACY_DEGREES = ((1, 3, True), (1, 4, True)) + POSSIBLE_DEGREES
 
 
-def validate_degree(positive, negative, singleton, legacy=False):
+def validate_degree(positive, negative, singleton):
     if (type(positive) is not int or type(negative) is not int or
             positive < 1 or negative < 1 or positive + negative > 30 or
             type(singleton) is not bool):
         raise ValueError("invalid exposure degrees")
-    if singleton and negative != 1 and not legacy:
+    if singleton and negative != 1:
         raise ValueError("singleton requires negative degree 1")
 
 
@@ -57,8 +56,8 @@ def _build_formula(formula, roles, variable, positive, negative, singleton):
 
 
 def generate_exposure(formula, variable, positive, negative, singleton,
-                      required_clause=None, legacy=False):
-    validate_degree(positive, negative, singleton, legacy)
+                      required_clause=None):
+    validate_degree(positive, negative, singleton)
     validate_exposure_formula(formula, variable)
     wildcard_indices = [index for index, clause in enumerate(formula)
                         if any(is_tail(literal) for literal in clause)]
@@ -80,7 +79,7 @@ def generate_exposure(formula, variable, positive, negative, singleton,
     return generated
 
 
-def expected_children(node, legacy=False):
+def expected_children(node):
     # Clause indices in refine records refer to the producer's original
     # sequence, so validate here but do not sort before applying the split.
     normalize_formula(node["formula"])
@@ -102,29 +101,26 @@ def expected_children(node, legacy=False):
             raise ValueError("exposure requires one tail and an active literal")
         result = ({replace_tail(formula, index, None)}
                   if tails[0][2] == "any" else set())
-        degrees = node.get("degrees", LEGACY_DEGREES if legacy else POSSIBLE_DEGREES)
+        degrees = node["degrees"]
         if not isinstance(degrees, (list, tuple)) or not degrees:
             raise ValueError("exposure needs a nonempty degree specification")
         for positive, negative, singleton in degrees:
             result.update(generate_exposure(formula, node["variable"],
                                             positive, negative, singleton,
-                                            index, legacy=legacy))
+                                            index))
         return result
     raise ValueError(f"unknown refine rule {rule!r}")
 
 
-def declared_root(node, legacy=False):
+def declared_root(node):
     """Decode the producer's initial family declaration, not a refinement."""
     fields = {"kind", "formula", "variable", "positive", "negative", "singleton", "children"}
-    if legacy:
-        fields.add("rule")
-    if (set(node) != fields or node["kind"] != ("refine" if legacy else "root_family") or
-            (legacy and node["rule"] != "expose_variable")):
+    if set(node) != fields or node["kind"] != "root_family":
         raise ValueError("invalid root family declaration")
     if node.get("formula") != [] or len(node.get("children", [])) != 1:
         raise ValueError("root declaration needs an empty seed and exactly one child")
     expected = generate_exposure((), node["variable"], node["positive"],
-                                 node["negative"], node["singleton"], legacy=legacy)
+                                 node["negative"], node["singleton"])
     child = node["children"][0]
     if {canonical_formula(f) for f in expected} != {canonical_formula(child["formula"])}:
         raise ValueError("root family differs from its declared degrees")

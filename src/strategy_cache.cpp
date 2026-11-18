@@ -171,7 +171,7 @@ ProofNode analyze_residual(const CNF &formula, int depth, double q)
         ProofNode child({0});
         child.formula_snapshot = reduced.cnf->get_cert_snapshot();
         if (reduced.total_decrease == 0)
-            child = reduced.cnf->xiao_branch(depth, "", q);
+            child = reduced.cnf->xiao_branch(depth, q);
         for (auto it = reduced.steps.rbegin(); it != reduced.steps.rend(); ++it)
         {
             ProofNode parent;
@@ -179,7 +179,6 @@ ProofNode analyze_residual(const CNF &formula, int depth, double q)
             parent.rule = it->rule;
             parent.pivot_id = it->pivot_id;
             parent.formula_snapshot = it->formula_snapshot;
-            parent.rr_witness_clauses = it->witness_clauses;
             parent.vec = child.vec;
             for (int &decrease : parent.vec) decrease += it->decrease;
             parent.tau = branching_factor(parent.vec);

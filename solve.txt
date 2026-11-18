@@ -1,0 +1,16 @@
+set 1.2872
+
+add x 3 2 a
+addpos y
+-x
+
+branch
+addpos z
+-x
+y
+
+branch
+empty_divide -1
+branch
+
+exit

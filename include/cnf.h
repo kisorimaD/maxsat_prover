@@ -18,6 +18,7 @@ extern int ID_COUNTER;
 
 double branching_factor(const vector<int> &a, double tol = 1e-12);
 long double branching_weight(const vector<int> &a, double q);
+vector<int> reduction_or_branch_bound(const vector<int> &branch_vector, double q);
 bool meets_branching_target(const vector<int> &a, double q);
 
 struct MaxSATSettingsType
@@ -34,16 +35,6 @@ struct ProofNode;
 
 struct GroupWitness {
     std::string rule;            // "basic", "lemma2", "lemma3", "double_lemma3", "lemma4"
-    int basic_reduce_val = 0;    
-
-    // Специфичные аргументы для лемм
-    // Для lemma4: lemma_local_D хранит j (= min(pos,neg))
-    int lemma_var_id = -1;
-    int second_lemma_var_id = -1; // второй (2,1)-singleton для double_lemma3
-    int lemma_local_D = -1;
-    int lemma_pos_count = -1;
-    int lemma_neg_count = -1;
-
     // Constructive processing of the materialized residual formula.
     vector<int> claimed_vector;
     std::shared_ptr<const ProofNode> residual_proof;
@@ -57,10 +48,10 @@ struct ProofNode {
     int pivot_id = -1;      // Переменная, по которой идет ветвление/редукция
     std::vector<int> vec;   // Итоговый вектор редукций (например, {3, 3})
     double tau = 100.0;     // Итоговый branching factor
+    // Imported branching case serialized independently of the bound at q.
+    std::vector<int> assumption_branch_vector;
    
     int target_clause_idx = -1; // Для узла empty_divide
-    std::vector<int> branch_ids;
-    std::vector<int> partition;
     std::vector<std::vector<int>> cover_groups; // grouped branching may overlap
     std::vector<std::vector<int>> formula_snapshot; 
     
@@ -73,8 +64,6 @@ struct ProofNode {
     std::map<int, int> subsumptions; 
     
     std::vector<GroupWitness> group_witnesses;
-    std::vector<std::string> grouping_justifications; 
-    std::vector<int> rr_witness_clauses;
 
     int reduced_cnt_true = 0;
     int reduced_cnt_false = 0;
@@ -89,7 +78,6 @@ struct ProofNode {
 struct ProofAlternative {
     int offset = 0;          // clauses certainly satisfied in this alternative
     int decrease = 0;        // clauses removed from the global m-parameter
-    std::vector<int> assignments;
     std::vector<int> represented_masks;
     std::shared_ptr<ProofNode> proof;
 };
@@ -201,20 +189,12 @@ public:
 
     CNF(CNF &cnf);
 
-    // ~CNF()
-    // {
-    //     for (auto c : clauses)
-    //     {
-    //         delete c;
-    //     }
-    // }
-
     ProofNode branch(vector<int> ids);
 
     ProofNode branch_group(vector<int> ids, int max_groups = -1,
                            bool construct_proof = false, double q = 1.2873);
 
-    ProofNode xiao_branch(int depth, string first_var = "x", double q = 1.2873);
+    ProofNode xiao_branch(int depth, double q = 1.2873);
 
     std::vector<std::vector<int>> get_snapshot();
     std::vector<std::vector<int>> get_cert_snapshot() const;
@@ -266,10 +246,10 @@ struct DirectLemmaResult
     int pos_count = -1;
     int neg_count = -1;
     vector<int> vec;
-    double tau = 100.0;
 };
 
 bool is_any_unknown_literal(const Literal *l);
+pair<int, CNF *> apply_xiao_assignment(CNF *original, int var_id, bool value);
 map<int, FormulaVarStats> analyze_formula(const CNF &cnf);
 GroupResidual materialize_group_residual(const CNF &cnf,
                                          const vector<int> &ids,
@@ -290,9 +270,7 @@ struct DivideResult {
 };
 
 
-// int calculate_F(CNF &cnf, int var_id);
-
-vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type); //,const std::function<bool(int, bool, bool, Clause*)>& condition_func = [](int, bool, bool, Clause*){ return true; });
+vector<CNF *> add_new_var(CNF *cnf, string v_name, int i, int j, LitType type);
 vector<CNF *> add_new_var_in_place(CNF *cnf, string v_name, const std::function<int(CNF *)> &need_index_func, vector<LiteralDegType> variants = POSSIBLE_LITERALS);
 
 DivideResult empty_divide(CNF* cnf, double q = 1.2873);
@@ -300,7 +278,6 @@ DivideResult empty_divide(CNF* cnf, double q = 1.2873);
 bool is_A_subset_of_B(int A, int B);
 bool check_group_validity(const vector<int>& group_masks, int k, string& diag);
 
-extern vector<string> valid_3_partitions;
 
 
 void print_clause(Clause &c);

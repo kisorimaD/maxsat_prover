@@ -1,87 +1,85 @@
 # MaxSAT Prover
 
-maxsat_prover is an experimental certificate generator for the difficult
-`(3,2)`-literal case in an exact MaxSAT branching analysis. The C++ program
-enumerates finite CNF templates, tries assignment, grouping, and reduction
-strategies, computes their branching vectors, and writes a proof log. A
-separate Python verifier checks the assembled certificate using exact rational
-branching arithmetic and exhaustive semantic checks of the local transitions.
-
-The current certificate targets the branching base `1.2872`. It is a local
-result and still contains named branching-lemma assumptions, so successful
-verification is reported as *accepted relative to assumptions*.
+A certificate generator for the `(3,2)`-literal bottleneck in the MaxSAT
+branching analysis described in `.docs/main.pdf`. The C++ search enumerates
+local templates and chooses assignment, grouping and reduction strategies.
+An independent Python checker validates coverage, local optimum identities
+and the branching inequality using exact rational arithmetic.
 
 ## Requirements
 
-- A C++17 compiler (the Makefile uses `g++`)
-- GNU Make
-- Python 3
-- NumPy (`python3 -m pip install numpy`)
+- A C++17 compiler (`g++` by default) and GNU Make
+- Python 3 with NumPy (`python3 -m pip install numpy`)
 
-## Build
+## Reproduce the bottleneck result
+
+```sh
+make certificate
+```
+
+This builds the generator, runs `solve.txt`, assembles `proof_tree.json`, and
+checks it at `q = 1.2872`. Generation must leave zero unresolved cases; an
+incomplete proof log is rejected during assembly. Generated artifacts are
+ignored by Git. The steps can also be run separately:
 
 ```sh
 make
+./maxsat_prover test < solve.txt
+python3 stitch_certificate.py pre_certificate.jsonl proof_tree.json
+python3 verify_certificate.py proof_tree.json verification_assumptions.json
 ```
 
-This creates the `maxsat_prover` executable in the project root.
+Starting `maxsat_prover test` overwrites `pre_certificate.jsonl`. The other
+entry points, including tests and `--help`, preserve it. `make certificate`
+also overwrites the assembled certificate and assumption log.
 
-## Run
+## Verification contract
 
-> **Note:** every invocation of `maxsat_prover` recreates
-> `pre_certificate.jsonl`. Copy an existing generation log elsewhere before
-> running the executable if you need to keep it.
+By default the verifier requires the paper's profile:
 
-Show the available entry points:
+- target `1.2872` (exactly `1609/1250`);
+- root `(x∨?1)(x∨?2)(x∨?3)(¬x∨?4)(¬x∨?5)`, up to renaming;
+- exposure classes `(3,1)-singleton`, `(2,2)`, `(3,2)`, `(2,3)`,
+  `(4,1)-singleton`.
+
+It checks all refinement children, both sides of assignments, semantic
+decompositions for every boundary valuation, clause decreases and the final
+branching vectors. Step 5.1 is expanded into an ordinary assignment proof,
+including both residual formulas; it is not an imported assumption.
+
+Only `lemma2`, `lemma3`, `lemma4` and `double_lemma3` are allowed as imports.
+These refer to the baseline results identified in the paper, not to lemmas
+of the same numbers in this project's paper. Every imported occurrence is
+written to `verification_assumptions.json`, with its formula, vector and path.
+The successful result is `ACCEPT BOTTLENECK RELATIVE TO IMPORTED LEMMAS`.
+
+The checker uses the larger weight of the logged branching case and a
+one-clause reduction. It relies on the source lemmas and their applicability,
+including the baseline algorithm's global structural restrictions. The
+completeness of the five exposure classes for Step 5.4 is the
+argument in §5.2 of the paper. An accepted certificate is a local analysis
+relative to these premises, not an independently verified complete MaxSAT solver.
+
+For another local family or target, opt out of the paper's profile explicitly:
 
 ```sh
+python3 verify_certificate.py local_proof.json local_assumptions.json --local
+```
+
+This reports `ACCEPT LOCAL`, with the same qualification if imports remain.
+Only certificate format `maxsat-local-proof-v2` and explicitly typed tails
+are supported. Old v1 certificates and numeric tail shorthands must be regenerated.
+
+## Tests and interactive search
+
+```sh
+make check
 ./maxsat_prover --help
-```
-
-Run the interactive template-analysis interface:
-
-```sh
 ./maxsat_prover test
 ```
 
-The interface accepts commands such as `add`, `addpos`, `branch`,
-`xiao_branch`, `stats`, and `print`; enter `help` for the complete command
-list. The included example session can be run non-interactively:
-
-```sh
-./maxsat_prover test < solve.txt
-```
-
-Some quick internal checks are also available:
-
-```sh
-./maxsat_prover reductions
-./maxsat_prover groups3
-python3 test_verifier.py
-```
-
-The C++ generator writes certificate records to `pre_certificate.jsonl`.
-After a complete generation session, assemble them into one proof tree with:
-
-```sh
-python3 stitch_certificate.py pre_certificate.jsonl proof_tree.json \
-  --numerator 12872 --denominator 10000
-```
-
-## Verify a certificate
-
-Verify the included certificate independently of the C++ search procedure:
-
-```sh
-python3 verify_certificate.py proof_tree.json verification_assumptions
-```
-
-On success, the verifier prints certificate statistics and either `ACCEPT` or
-`ACCEPT RELATIVE TO ASSUMPTIONS`. The second argument is the output file in
-which every remaining named assumption is recorded. 
-
-
-You can inspect it with, for example:
-```sh
-python3 -m json.tool verification_assumptions.json
-```
+`make check` runs C++ checks and Python unit/integration tests. `make certificate`
+is the separate full experiment. The interactive interface remains available
+for diagnostics; `help` lists its commands. Set `assumptions off` to exclude
+imported lemmas from search; constructive Step 5.1 remains available. The current
+full scenario needs imported lemmas to resolve all cases.

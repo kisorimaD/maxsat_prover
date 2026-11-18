@@ -2,10 +2,10 @@ import json
 
 import numpy as np
 
-from .arithmetic import check_vector
+from .arithmetic import check_vector, target_fraction
 from .formula import (assignment_residual, canonical_formula,
                       normalize_formula, tail_ids)
-from .refine import expected_children
+from .refine import POSSIBLE_DEGREES, expected_children
 from .semantic import optimum_vector
 
 
@@ -14,14 +14,15 @@ class VerificationError(Exception):
 
 
 class Checker:
-    def __init__(self, numerator, denominator, legacy=False):
+    def __init__(self, numerator, denominator, *, bottleneck=False):
+        self.target = target_fraction(numerator, denominator)
         self.numerator = numerator
         self.denominator = denominator
         self.nodes = 0
         self.strategies = 0
         self.max_depth = 0
         self.assumptions = []
-        self.legacy = legacy
+        self.bottleneck = bottleneck
 
     def fail(self, path, message):
         raise VerificationError(
@@ -31,6 +32,15 @@ class Checker:
         )
 
     def check(self, proof):
+        if not isinstance(proof, dict):
+            self.fail("proof", "node must be an object")
+        if self.bottleneck:
+            if self.target != target_fraction(12872, 10000):
+                self.fail("target", "bottleneck target must be 1.2872")
+            root = [[2, {"tail": i, "kind": "any"}] for i in range(3)]
+            root += [[-2, {"tail": i, "kind": "any"}] for i in range(3, 5)]
+            if canonical_formula(proof.get("formula")) != canonical_formula(root):
+                self.fail("proof", "bottleneck root must be the (3,2) family with five arbitrary tails")
         self._coverage(proof, "proof", 1)
 
     def _coverage(self, node, path, depth):
@@ -55,12 +65,22 @@ class Checker:
             return
         if kind != "refine":
             self.fail(path, f"expected refine or strategy, got {kind!r}")
+        fields = {"kind", "formula", "rule", "clause", "children"}
+        if node.get("rule") == "expose_at_clause":
+            fields.update(("variable", "degrees"))
+        if set(node) != fields:
+            self.fail(path, "invalid refine fields")
+        if self.bottleneck and node.get("rule") == "expose_at_clause":
+            degrees = node["degrees"]
+            if (not isinstance(degrees, list) or
+                    sorted(degrees) != sorted(map(list, POSSIBLE_DEGREES))):
+                self.fail(path, "bottleneck exposure must cover the five baseline degree classes")
         children = node.get("children")
         if not isinstance(children, list) or not children:
             self.fail(path, "refine must have nonempty children")
         try:
             expected = {canonical_formula(formula)
-                        for formula in expected_children(node, legacy=self.legacy)}
+                        for formula in expected_children(node)}
             actual = {canonical_formula(child["formula"]) for child in children}
         except (KeyError, TypeError, ValueError) as error:
             self.fail(path, str(error))
@@ -91,18 +111,28 @@ class Checker:
                     not isinstance(vector, list) or not vector or
                     any(type(value) is not int or value <= 0 for value in vector)):
                 self.fail(path, "invalid trusted assumption")
+            if node["name"] not in {"lemma2", "lemma3", "lemma4", "double_lemma3"}:
+                self.fail(path, f"unknown imported lemma {node['name']!r}")
             self.assumptions.append({"path": path, "name": node["name"],
                                      "formula": node["formula"], "vector": vector})
-            return vector
+            # The imported vector covers the branching case. For double_lemma3
+            # it also dominates (8,2), the case of a reduction at the second step.
+            inverse = 1 / self.target
+            branch_weight = sum(inverse ** decrease for decrease in vector)
+            return [1] if inverse > branch_weight else vector
         if kind != "decompose":
             self.fail(path, f"expected decompose or call, got {kind!r}")
         formula = normalize_formula(node.get("formula"))
         alternatives = node.get("alternatives")
         if not isinstance(alternatives, list) or not alternatives:
-            legacy = node.get("legacy_vector")
-            self.fail(path, f"decompose has no constructive alternatives; legacy claim={legacy}")
+            self.fail(path, "decompose has no constructive alternatives")
 
         transition = node.get("transition")
+        fields = {"kind", "formula", "transition", "alternatives"}
+        if transition == "assign":
+            fields.add("variable")
+        if set(node) != fields:
+            self.fail(path, "invalid decomposition fields")
         if transition == "assign":
             if len(alternatives) != 2 or type(node.get("variable")) is not int:
                 self.fail(path, "assign needs a variable and exactly two alternatives")
@@ -173,23 +203,16 @@ class Checker:
         return vector
 
 
-def load_and_check(filename):
+def load_and_check(filename, *, bottleneck=False):
     with open(filename, "r", encoding="utf-8") as stream:
         certificate = json.load(stream)
     if set(certificate) != {"format", "target", "proof"}:
         raise VerificationError("top-level fields are invalid")
-    if certificate["format"] not in ("maxsat-local-proof-v1", "maxsat-local-proof-v2"):
+    if certificate["format"] != "maxsat-local-proof-v2":
         raise VerificationError("unknown certificate format")
     target = certificate["target"]
     if set(target) != {"numerator", "denominator"}:
         raise VerificationError("invalid target")
-    legacy = certificate["format"] == "maxsat-local-proof-v1"
-    checker = Checker(target["numerator"], target["denominator"], legacy=legacy)
-    proof = certificate["proof"]
-    # v1 encoded the initial family declaration as an exposure of []. It is
-    # a declaration of the root family, never a coverage claim about [].
-    if legacy and proof.get("rule") == "expose_variable":
-        from .refine import declared_root
-        proof = declared_root(proof, legacy=True)
-    checker.check(proof)
+    checker = Checker(target["numerator"], target["denominator"], bottleneck=bottleneck)
+    checker.check(certificate["proof"])
     return checker

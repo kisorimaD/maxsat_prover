@@ -139,12 +139,14 @@ std::string CertLogger::proof_node_to_json(const ProofNode &node)
         if (!MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS)
             throw std::logic_error(
                 "strict proof mode reached a named assumption: " + node.rule);
+        if (node.assumption_branch_vector.empty())
+            throw std::logic_error("missing branching case for imported lemma: " + node.rule);
         ss << "{\"kind\":\"assumption\",\"formula\":" << formula
            << ",\"name\":\"" << node.rule << "\",\"vector\":[";
-        for (size_t i = 0; i < node.vec.size(); ++i)
+        for (size_t i = 0; i < node.assumption_branch_vector.size(); ++i)
         {
             if (i) ss << ',';
-            ss << node.vec[i];
+            ss << node.assumption_branch_vector[i];
         }
         ss << "]}";
         return ss.str();
@@ -195,8 +197,7 @@ std::string CertLogger::proof_node_to_json(const ProofNode &node)
            << ",\"decrease\":" << reward
            << ",\"formula\":" << formula_to_json(node.children[0].formula_snapshot)
            << ",\"proof\":" << proof_node_to_json(node.children[0]) << "}]"
-           << ",\"explanation\":{\"rule\":\"" << node.rule
-           << "\",\"pivot\":" << node.pivot_id << "}}";
+           << '}';
         return ss.str();
     }
 
@@ -210,19 +211,8 @@ std::string CertLogger::proof_node_to_json(const ProofNode &node)
         return ss.str();
     }
 
-    // A legacy vector is deliberately not treated as a proof.  It is emitted
-    // as an incomplete decomposition so that the small verifier reports the
-    // first place where constructive child formulas are still missing.
-    ss << "{\"kind\":\"decompose\",\"transition\":\"legacy_claim\""
-       << ",\"formula\":" << formula << ",\"alternatives\":[]"
-       << ",\"legacy_vector\":[";
-    for (size_t i = 0; i < node.vec.size(); ++i)
-    {
-        if (i) ss << ',';
-        ss << node.vec[i];
-    }
-    ss << "]}";
-    return ss.str();
+    throw std::logic_error("Cannot serialize an incomplete proof node: " + node.type);
+
 }
 
 void CertLogger::log_proof_tree(long long parent_id,

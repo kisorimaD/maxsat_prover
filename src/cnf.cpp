@@ -5,19 +5,16 @@
 
 #include <algorithm>
 #include <assert.h>
-#include <fstream>
 #include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <math.h>
 #include <cmath>
 #include <set>
 #include <string>
 #include <unordered_set>
 #include <stdexcept>
 
-// #include <fstream>
 
 using namespace std;
 
@@ -306,14 +303,7 @@ ProofNode CNF::branch(vector<int> ids)
     node.formula_snapshot = this->get_cert_snapshot();
     node.subsumptions = current_subsumptions;
 
-    vector<int> full_partition(1 << k, -1);
-    for (int i = 0; i < (int)branch.size(); ++i)
-    {
-        full_partition[valid_masks[i]] = i;
-    }
-    node.partition = full_partition;
     node.type = "enumeration";
-    node.branch_ids = ids;
 
     map<int, int> id_to_index;
     for (int i = 0; i < k; ++i) id_to_index[ids[i]] = i;
@@ -361,7 +351,6 @@ ProofNode CNF::branch(vector<int> ids)
         ProofAlternative alternative;
         alternative.offset = offset;
         alternative.decrease = decrease;
-        alternative.assignments = {mask};
         alternative.represented_masks = {mask};
         alternative.proof = make_shared<ProofNode>(move(call));
         node.alternatives.push_back(move(alternative));
@@ -369,29 +358,6 @@ ProofNode CNF::branch(vector<int> ids)
 
     return node;
 }
-
-bool get_next_product(vector<int> &cs)
-{
-    int i = cs.size() - 1;
-
-    while (i)
-    {
-        if (cs[i] < i)
-        {
-            cs[i]++;
-            return true;
-        }
-        else
-        {
-            cs[i] = 0;
-            i--;
-        }
-    }
-    return false;
-}
-
-// Legacy partition fixture retained only for the groups3 validity test.
-vector<string> valid_3_partitions;
 
 bool is_any_unknown_literal(const Literal *l)
 {
@@ -894,13 +860,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
             {
                 GroupWitness witness;
                 witness.rule = lemma.rule;
-                witness.lemma_var_id = lemma.pivot_id;
-                witness.second_lemma_var_id = lemma.second_pivot_id;
-                witness.lemma_local_D = lemma.local_D;
-                witness.lemma_pos_count = lemma.pos_count;
-                witness.lemma_neg_count = lemma.neg_count;
                 witness.claimed_vector = lemma.vec;
-                extra_choices.push_back({lemma.vec, witness});
+                extra_choices.push_back({reduction_or_branch_bound(lemma.vec, q), witness});
             }
             // Statistics count clauses after representative substitutions,
             // including deduplication of merged literals.
@@ -918,12 +879,9 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
                     if (i < j || units < j - 1) continue;
                     GroupWitness witness;
                     witness.rule = "lemma4";
-                    witness.lemma_var_id = id;
-                    witness.lemma_local_D = j;
-                    witness.lemma_pos_count = pos;
-                    witness.lemma_neg_count = neg;
                     witness.claimed_vector = {i, 2 * j + 1};
-                    extra_choices.push_back({witness.claimed_vector, witness});
+                    extra_choices.push_back({
+                        reduction_or_branch_bound(witness.claimed_vector, q), witness});
                 }
             }
         }
@@ -951,7 +909,6 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
             {
                 best_weight = weight;
                 best_vec = move(vec);
-                witness.basic_reduce_val = base;
                 best_witness = move(witness);
             }
         };
@@ -965,17 +922,15 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
     });
 
     GroupCover cover = minimum_group_cover(masks.size(), weighted, max_groups);
-    ProofNode direct_child_search = this->xiao_branch(1, "", q);
+    ProofNode direct_child_search = this->xiao_branch(1, q);
     if (cover.groups.empty() || branching_weight(direct_child_search.vec, q) < cover.weight)
         return direct_child_search;
 
     ProofNode node;
     node.type = construct_proof ? "enumeration" : "leaf";
-    node.branch_ids = ids;
     node.formula_snapshot = this->get_cert_snapshot();
     node.subsumptions = move(current_subsumptions);
-    // `partition` belongs to plain branching. Overlapping groups are recorded
-    // explicitly here and in each constructive alternative's represented_masks.
+    // Overlapping groups are recorded here and in each alternative.
     for (int index : cover.groups)
     {
         const Candidate &candidate = candidates[index];
@@ -1008,7 +963,8 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
         {
             child.type = "leaf";
             child.rule = witness.rule;
-            child.vec = witness.claimed_vector;
+            child.assumption_branch_vector = witness.claimed_vector;
+            child.vec = reduction_or_branch_bound(witness.claimed_vector, q);
             child.tau = branching_factor(child.vec);
             child.formula_snapshot = residual.cnf->get_cert_snapshot();
         }
@@ -1032,6 +988,14 @@ long double branching_weight(const vector<int> &a, double q)
     for (int decrease : a)
         total += powl((long double)q, -(long double)decrease);
     return total;
+}
+
+vector<int> reduction_or_branch_bound(const vector<int> &branch_vector, double q)
+{
+    const vector<int> reduction = {1};
+    if (branching_weight(reduction, q) > branching_weight(branch_vector, q))
+        return reduction;
+    return branch_vector;
 }
 
 bool meets_branching_target(const vector<int> &a, double q)
@@ -1187,7 +1151,6 @@ unordered_map<string, long long> *used_nodes = &used_node_storage;
 void preprocess(int maximum_clause_size)
 {
     used_nodes->clear();
-    valid_3_partitions.clear();
     ID2VAR[0] = "?";
     VAR2ID["?"] = 0;
     ID2VAR[1] = "?+";
@@ -1202,30 +1165,6 @@ void preprocess(int maximum_clause_size)
                          {4, 1, SINGLETON}, {2, 1, ANY},
                          {2, 1, SINGLETON}};
 
-    ifstream infile("groups3.txt");
-    if (!infile.is_open())
-    {
-        cerr << "Couldn't open file with groups" << endl;
-        return;
-    }
-
-    int N;
-
-    if (infile.is_open())
-    {
-        infile >> N;
-        string line;
-        getline(infile, line);
-        for (int i = 0; i < N; ++i)
-        {
-            infile >> line;
-            if (!line.empty())
-                valid_3_partitions.push_back(line);
-        }
-        infile.close();
-
-        cout << "Загружено " << valid_3_partitions.size() << " разбиений\n\n";
-    }
 }
 
 string join(vector<string> a, string del)
@@ -1238,24 +1177,6 @@ string join(vector<string> a, string del)
             ans += del;
     }
     return ans;
-}
-
-string cnf_to_string(CNF *cnf)
-{
-    vector<string> clauses_str;
-    for (auto clause : cnf->clauses)
-    {
-        vector<string> lits_str;
-        for (auto lit : clause->lits)
-        {
-            lits_str.push_back((lit->inv ? "~" : "=") + to_string(lit->id));
-        }
-        sort(lits_str.begin(), lits_str.end());
-        string clause_str = "(" + join(lits_str, "∨") + ")";
-        clauses_str.push_back(clause_str);
-    }
-    sort(clauses_str.begin(), clauses_str.end());
-    return join(clauses_str, "∧");
 }
 
 string cnf_to_max_string(CNF *cnf)
@@ -1595,7 +1516,7 @@ DivideResult empty_divide(CNF *cnf, double q)
     {
         long double result;
         {
-            ProofNode node = candidate->xiao_branch(1, "x", q);
+            ProofNode node = candidate->xiao_branch(1, q);
             result = branching_weight(node.vec, q);
         }
         {
@@ -1609,7 +1530,7 @@ DivideResult empty_divide(CNF *cnf, double q)
     {
         long double xiao_weight;
         {
-            ProofNode node = candidate->xiao_branch(1, "x", q);
+            ProofNode node = candidate->xiao_branch(1, q);
             xiao_weight = branching_weight(node.vec, q);
         }
         {
@@ -1617,7 +1538,7 @@ DivideResult empty_divide(CNF *cnf, double q)
             if (branching_weight(group_node.vec, q) <= xiao_weight)
                 return candidate->branch_group(ids, -1, true, q);
         }
-        return candidate->xiao_branch(1, "x", q);
+        return candidate->xiao_branch(1, q);
     };
 
     for (int i = 0; i < (int)cnf->clauses.size(); ++i)

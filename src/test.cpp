@@ -301,9 +301,9 @@ void test_strategy_cache()
     set_strategy_cache_enabled(true);
     CNF *first = create_dummy_cnf({{2, 0}, {-2, 0}});
     CNF *renamed = create_dummy_cnf({{2, 0}, {-2, 0}});
-    ProofNode original = first->xiao_branch(1, "", q);
+    ProofNode original = first->xiao_branch(1, q);
     assert(strategy_cache_stats().misses == 1);
-    ProofNode hit = renamed->xiao_branch(1, "", q);
+    ProofNode hit = renamed->xiao_branch(1, q);
     assert(strategy_cache_stats().hits == 1);
     assert(hit.formula_snapshot == renamed->get_cert_snapshot());
     assert(hit.formula_snapshot != original.formula_snapshot);
@@ -316,15 +316,15 @@ void test_strategy_cache()
     for (int literal : hit.children[0].formula_snapshot[0])
         assert(current_tails.count(literal));
     hit.children[0].formula_snapshot.clear();
-    assert(!renamed->xiao_branch(1, "", q).children[0].formula_snapshot.empty());
+    assert(!renamed->xiao_branch(1, q).children[0].formula_snapshot.empty());
 
     auto misses = strategy_cache_stats().misses;
-    renamed->xiao_branch(1, "", 1.5);
-    renamed->xiao_branch(2, "", q);
+    renamed->xiao_branch(1, 1.5);
+    renamed->xiao_branch(2, q);
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
-    renamed->xiao_branch(1, "", q);
+    renamed->xiao_branch(1, q);
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = 3;
-    renamed->xiao_branch(1, "", q);
+    renamed->xiao_branch(1, q);
     assert(strategy_cache_stats().misses == misses + 4);
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
     MaxSATSettings.MAXIMUM_CLAUSE_SIZE = -1;
@@ -339,9 +339,9 @@ void test_strategy_cache()
     CNF *reordered = new CNF(*first);
     reverse(reordered->clauses.begin(), reordered->clauses.end());
     misses = strategy_cache_stats().misses;
-    typed->xiao_branch(1, "", q);
-    shared->xiao_branch(1, "", q);
-    reordered->xiao_branch(1, "", q);
+    typed->xiao_branch(1, q);
+    shared->xiao_branch(1, q);
+    reordered->xiao_branch(1, q);
     assert(strategy_cache_stats().misses == misses + 3);
     destroy_cnf(typed);
     destroy_cnf(shared);
@@ -419,6 +419,36 @@ void test_strategy_cache()
     cout << "Residual strategy cache tests passed\n";
 }
 
+void test_step51()
+{
+    bool saved = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
+    for (int sign : {1, -1})
+    {
+        CNF *formula = create_dummy_cnf({
+            {2 * sign, 0}, {2 * sign, 0}, {2 * sign, 0},
+            {-2 * sign}, {-2 * sign, 0}});
+        ProofNode proof = formula->xiao_branch(0, 1.2872);
+        assert(proof.type == "branch" && proof.rule.empty());
+        assert(proof.pivot_id == 2 && proof.children.size() == 2);
+        assert(proof.vec == (sign == 1 ? vector<int>{4, 2} : vector<int>{2, 4}));
+        assert(proof.offset_true == (sign == 1 ? 3 : 2));
+        assert(proof.offset_false == (sign == 1 ? 2 : 3));
+        for (const auto &child : proof.children)
+            assert(child.type == "leaf" && child.rule.empty() && child.vec == vector<int>{0});
+        delete_dummy_cnf(formula);
+    }
+    // Both boundary markers can coexist after a reduction. Assigning x must
+    // transfer this boundary-only clause without claiming another decrease.
+    CNF *mixed = create_dummy_cnf({{2, 0, 1}, {-2}});
+    auto [decrease, residual] = apply_xiao_assignment(mixed, 2, false);
+    assert(decrease == 1 && residual->clauses.empty());
+    destroy_cnf(residual);
+    delete_dummy_cnf(mixed);
+    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved;
+    cout << "Constructive Step 5.1 tests passed\n";
+}
+
 void test_weighted_search()
 {
     const double q = 1.2872;
@@ -442,20 +472,35 @@ void test_weighted_search()
         {3}, {3, 0}, {-3, 0}, {-3, 0}});
     bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
-    ProofNode low = input->xiao_branch(0, "", 1.233);
-    ProofNode high = input->xiao_branch(0, "", q);
+    ProofNode low = input->xiao_branch(0, 1.233);
+    ProofNode high = input->xiao_branch(0, q);
     assert(low.rule == "lemma3" && low.vec == vector<int>({1, 8}));
     assert(high.rule == "lemma4" && high.vec == vector<int>({2, 5}));
     // Repeated changes of q must not reuse a previous target's choice.
-    assert(input->xiao_branch(0, "", 1.233).vec == low.vec);
+    assert(input->xiao_branch(0, 1.233).vec == low.vec);
     for (double target : {1.233, q, 1.5})
     {
-        ProofNode variable = input->xiao_branch(1, "", target);
+        ProofNode variable = input->xiao_branch(1, target);
         ProofNode group = input->branch_group({2, 3}, -1, false, target);
         ProofNode proof = input->branch_group({2, 3}, -1, true, target);
         assert(branching_weight(group.vec, target) <= branching_weight(variable.vec, target));
         assert(group.vec == proof.vec);
     }
+    ProofNode lemma4_reduction_bound = input->xiao_branch(0, 1.5);
+    assert(lemma4_reduction_bound.rule == "lemma4");
+    assert(lemma4_reduction_bound.vec == vector<int>({1}));
+    assert(lemma4_reduction_bound.assumption_branch_vector == vector<int>({2, 5}));
+
+    CNF *two_singletons = create_dummy_cnf({
+        {2, 0}, {2, 0}, {-2}, {-3, 0}, {-3, 0}, {3}});
+    ProofNode composed = two_singletons->xiao_branch(0, q);
+    assert(composed.rule == "double_lemma3" && composed.vec == vector<int>({2, 9, 8}));
+    ProofNode double_reduction_bound = two_singletons->xiao_branch(0, 1.5);
+    assert(double_reduction_bound.rule == "double_lemma3");
+    assert(double_reduction_bound.vec == vector<int>({1}));
+    assert(double_reduction_bound.assumption_branch_vector == composed.vec);
+    delete_dummy_cnf(two_singletons);
+
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved_assumptions;
     delete_dummy_cnf(input);
     cout << "Fixed-target weighted search tests passed\n";
@@ -482,9 +527,6 @@ void test_basics()
 
     print_clause(unk);
 }
-
-void test_simple_branch()
-{}
 
 static vector<vector<int>> sorted_snapshot(CNF *cnf)
 {
@@ -637,12 +679,6 @@ void test_branching_factor()
     cout << branching_factor({1, 2}) << endl;
     cout << branching_factor({4}) << endl;
 }
-
-void test_branch_three_vars()
-{}
-
-void test_branch_two_vars()
-{}
 
 void test_subset_func()
 {
@@ -892,7 +928,7 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         for (int i = 0; i < variants.size(); ++i)
         {
             CNF *cnf = variants[i];
-            ProofNode rr_node = cnf->xiao_branch(xiao_depth, "", C);
+            ProofNode rr_node = cnf->xiao_branch(xiao_depth, C);
 
             if (!meets_branching_target(rr_node.vec, C)) {
                 filtered_variants.push_back(cnf);
@@ -1408,7 +1444,7 @@ void test_universal()
 
             ProofNode reg_node = cur.at(i)->branch(ids);
             ProofNode group_node = cur.at(i)->branch_group(ids, -1, false, C);
-            ProofNode xiao_node = cur.at(i)->xiao_branch(1, "", C);
+            ProofNode xiao_node = cur.at(i)->xiao_branch(1, C);
 
             vector<int> reg_branch = reg_node.vec;
             vector<int> group_branch = group_node.vec;
@@ -1449,7 +1485,7 @@ void test_universal()
 
                 ProofNode reg_node = cur.at(i)->branch(ids);
                 ProofNode group_node = cur.at(i)->branch_group(ids, -1, false, C);
-                ProofNode xiao_node = cur.at(i)->xiao_branch(1, "", C);
+                ProofNode xiao_node = cur.at(i)->xiao_branch(1, C);
 
                 vector<int> reg_branch = reg_node.vec;
                 vector<int> group_branch = group_node.vec;
@@ -1515,7 +1551,7 @@ void test_universal()
 
                 // Берем минимум между групповым ветвлением и ветвлением xiao
                 ProofNode grouped = cnf->branch_group(ids, -1, false, C);
-                ProofNode xiao = cnf->xiao_branch(1, "", C);
+                ProofNode xiao = cnf->xiao_branch(1, C);
                 double current_bf = branching_weight(grouped.vec, C) < branching_weight(xiao.vec, C)
                                         ? grouped.tau : xiao.tau;
 
@@ -1657,95 +1693,4 @@ void test_universal()
 
         cout << "Команда [" << command << "] не распознана\n";
     }
-}
-
-// -----------------------------------------------------------------------
-// Тест: проверяет корректность всех разбиений из groups3.txt
-//
-// Каждое разбиение — строка из 8 символов (цифр), где s[i] — номер
-// группы (класс) для i-й подстановки {x=бит0, y=бит1, z=бит2}.
-// Для каждой группы вызываем check_group_validity с k=3.
-// -----------------------------------------------------------------------
-void test_groups3_validity()
-{
-    const int k = 3;  // Три переменных ветвления
-    const int total_masks = 1 << k; // 8 подстановок
-
-    if (valid_3_partitions.empty())
-    {
-        cout << "[SKIP] valid_3_partitions не загружены (запустите preprocess())\n";
-        return;
-    }
-
-    int total   = (int)valid_3_partitions.size();
-    int ok_cnt  = 0;
-    int bad_cnt = 0;
-
-    cout << "Проверяем " << total << " разбиений из groups3.txt...\n";
-
-    for (int pi = 0; pi < total; ++pi)
-    {
-        const string& part = valid_3_partitions[pi];
-
-        if ((int)part.size() != total_masks)
-        {
-            cout << "[BAD #" << pi << "] Строка \"" << part
-                 << "\" имеет неверную длину " << part.size()
-                 << " (ожидается " << total_masks << ")\n";
-            bad_cnt++;
-            continue;
-        }
-
-        // Определяем, сколько классов и какие маски в каждом
-        int max_class = 0;
-        for (char ch : part)
-            max_class = max(max_class, (int)(ch - '0'));
-
-        bool partition_ok = true;
-
-        for (int cls = 0; cls <= max_class; ++cls)
-        {
-            // Собираем маски этого класса
-            vector<int> group_masks;
-            for (int mask = 0; mask < total_masks; ++mask)
-                if ((int)(part[mask] - '0') == cls)
-                    group_masks.push_back(mask);
-
-            if (group_masks.empty())
-                continue; // пропуск несуществующего класса
-
-            string diag;
-            bool group_ok = check_group_validity(group_masks, k, diag);
-
-            if (!group_ok)
-            {
-                if (partition_ok)
-                {
-                    // Первая ошибка в этом разбиении — выводим заголовок
-                    cout << "\n[BAD #" << pi << "] Разбиение: \"" << part << "\"\n";
-                }
-                partition_ok = false;
-
-                // Маски в группе с расшифровкой (xyz — бит0=x, бит1=y, бит2=z)
-                cout << "  Класс " << cls << " (маски:";
-                for (int m : group_masks)
-                {
-                    cout << " " << ((m >> 2) & 1) << ((m >> 1) & 1) << (m & 1);
-                }
-                cout << ")\n";
-                cout << "  Причина: " << diag << "\n";
-            }
-        }
-
-        if (partition_ok)
-            ok_cnt++;
-        else
-            bad_cnt++;
-    }
-
-    cout << "\n=== Итог: " << ok_cnt << "/" << total << " разбиений корректны";
-    if (bad_cnt == 0)
-        cout << " — всё OK ✓\n";
-    else
-        cout << ", " << bad_cnt << " НЕКОРРЕКТНЫХ ✗\n";
 }
