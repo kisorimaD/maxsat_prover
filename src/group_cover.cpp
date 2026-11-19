@@ -52,11 +52,10 @@ void enumerate_substitution_groups(
 }
 
 GroupCover minimum_group_cover(int assignment_count,
-                              const std::vector<WeightedGroup> &candidates,
-                              int max_groups)
+                              const std::vector<WeightedGroup> &candidates)
 {
-    if (assignment_count < 0 || max_groups < -1)
-        throw std::invalid_argument("invalid cover size or group limit");
+    if (assignment_count < 0)
+        throw std::invalid_argument("invalid cover size");
     std::vector<std::vector<int>> covers(candidates.size());
     // Equal coverage needs only its cheapest group, irrespective of its image.
     std::map<std::vector<int>, int> best_for_coverage;
@@ -80,8 +79,7 @@ GroupCover minimum_group_cover(int assignment_count,
         for (int row : rows) covering[row].push_back(candidate);
 
     struct Entry { long double weight; int choice; };
-    using State = std::pair<std::vector<int>, int>;
-    std::map<State, Entry> memo;
+    std::map<std::vector<int>, Entry> memo;
     auto remove_covered = [&](const std::vector<int> &remaining, int group) {
         std::vector<int> next;
         std::set_difference(remaining.begin(), remaining.end(),
@@ -90,12 +88,10 @@ GroupCover minimum_group_cover(int assignment_count,
         return next;
     };
     const long double infinity = std::numeric_limits<long double>::infinity();
-    std::function<long double(const std::vector<int>&, int)> solve =
-        [&](const std::vector<int> &remaining, int budget) -> long double {
+    std::function<long double(const std::vector<int>&)> solve =
+        [&](const std::vector<int> &remaining) -> long double {
         if (remaining.empty()) return 0;
-        if (budget == 0) return infinity;
-        State state{remaining, budget};
-        auto existing = memo.find(state);
+        auto existing = memo.find(remaining);
         if (existing != memo.end()) return existing->second.weight;
         Entry best{infinity, -1};
         // Every cover contains a group covering the first uncovered row.
@@ -103,25 +99,22 @@ GroupCover minimum_group_cover(int assignment_count,
         for (int group : covering[remaining.front()])
         {
             auto next = remove_covered(remaining, group);
-            long double weight = candidates[group].weight +
-                solve(next, budget < 0 ? -1 : budget - 1);
+            long double weight = candidates[group].weight + solve(next);
             if (weight < best.weight) best = {weight, group};
         }
-        memo.emplace(std::move(state), best);
+        memo.emplace(remaining, best);
         return best.weight;
     };
     std::vector<int> remaining;
     for (int i = 0; i < assignment_count; ++i) remaining.push_back(i);
-    int budget = max_groups < 0 ? -1 : std::min(max_groups, assignment_count);
     GroupCover result;
-    result.weight = solve(remaining, budget);
+    result.weight = solve(remaining);
     if (!std::isfinite(result.weight)) return result;
     while (!remaining.empty())
     {
-        int choice = memo.at({remaining, budget}).choice;
+        int choice = memo.at(remaining).choice;
         result.groups.push_back(choice);
         remaining = remove_covered(remaining, choice);
-        if (budget >= 0) --budget;
     }
     return result;
 }

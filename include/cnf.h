@@ -23,7 +23,6 @@ bool meets_branching_target(const vector<int> &a, double q);
 
 struct MaxSATSettingsType
 {
-    int MAXIMUM_CLAUSE_SIZE;
     // Strict proof-search mode.  When false, heuristic leaves whose only
     // justification is a named paper lemma are not considered at all.
     bool ALLOW_NAMED_ASSUMPTIONS;
@@ -179,8 +178,8 @@ public:
 
     ProofNode branch(vector<int> ids);
 
-    ProofNode branch_group(vector<int> ids, int max_groups = -1,
-                           bool construct_proof = false, double q = 1.2873);
+    ProofNode branch_group(vector<int> ids, bool construct_proof = false,
+                           double q = 1.2873);
 
 
     std::vector<std::vector<int>> get_snapshot();
@@ -253,4 +252,4 @@ bool check_group_validity(const vector<int>& group_masks, int k, string& diag);
 void print_clause(Clause &c);
 void print_cnf(CNF &cnf);
 
-void preprocess(int maximum_clause_size = -1);
+void preprocess();

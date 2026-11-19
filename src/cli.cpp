@@ -190,7 +190,7 @@ void branch_epoch_universal(vector<CNF *> &variants, vector<int> &ids, double C,
         CNF *cnf = variants[i];
         // Analyze the groups once and solve one unrestricted weighted cover.
         // Constructive residual proofs are already retained by group analysis.
-        ProofNode group_node = cnf->branch_group(ids, -1, true, C);
+        ProofNode group_node = cnf->branch_group(ids, true, C);
         if (!meets_branching_target(group_node.vec, C))
             filtered_variants.push_back(cnf);
         else
@@ -227,7 +227,6 @@ void print_help_universal()
     cout << "   print [i]                               \t\tВывести [i] вариант и разобрать по переменным\n";
     cout << "   stats                                   \t\tВывести минимум и максимум branching factor среди оставшихся вариантов\n";
     cout << "   factor [vector]                         \t\tВывести branching factor для заданного вектора\n";
-    cout << "   setposfunc [need_names] [no_names]      \t\tЗафиксировать позиционную функцию, которая будет выводиться в print\n";
     cout << "   empty_divide [i]                        \t\tПрименить empty_divide к [i] формуле (или ко всем, если i = -1)\n";
     cout << "   help                                    \t\tВывести список команд (этот)\n";
     cout << "   exit                                    \t\tВыйти из тестирования\n\n";
@@ -639,7 +638,7 @@ void run_interactive()
             cout << endl;
 
             ProofNode reg_node = cur.at(i)->branch(ids);
-            ProofNode group_node = cur.at(i)->branch_group(ids, -1, false, C);
+            ProofNode group_node = cur.at(i)->branch_group(ids, false, C);
 
             vector<int> reg_branch = reg_node.vec;
             vector<int> group_branch = group_node.vec;
@@ -657,9 +656,6 @@ void run_interactive()
             cout << "\n|  " << branching_factor(group_branch);
             cout << "\n\n";
 
-            cout << "Pos Func:\t";
-            cout << posfunc(cur.at(i)) << "\n\n";
-
             continue;
         }
 
@@ -670,7 +666,7 @@ void run_interactive()
                 pretty_branch_print(vars, cur.at(i));
                 cout << endl;
 
-                ProofNode group_node = cur.at(i)->branch_group(ids, -1, false, C);
+                ProofNode group_node = cur.at(i)->branch_group(ids, false, C);
 
                 vector<int> group_branch = group_node.vec;
 
@@ -694,7 +690,7 @@ void run_interactive()
             int worst_ind = -1;
             for (int i = 0; i < cur.size(); ++i)
             {
-                long double gfactor = branching_weight(cur.at(i)->branch_group(ids, -1, false, C).vec, C);
+                long double gfactor = branching_weight(cur.at(i)->branch_group(ids, false, C).vec, C);
                 
                 if (gfactor > worst)
                 {
@@ -726,7 +722,7 @@ void run_interactive()
             for (CNF *cnf : cur)
             {
 
-                double current_bf = cnf->branch_group(ids, -1, false, C).tau;
+                double current_bf = cnf->branch_group(ids, false, C).tau;
 
                 min_bf = min(min_bf, current_bf);
                 max_bf = max(max_bf, current_bf);

@@ -18,7 +18,7 @@
 
 using namespace std;
 
-MaxSATSettingsType MaxSATSettings{-1, true};
+MaxSATSettingsType MaxSATSettings{true};
 
 map<int, string> ID2VAR;
 map<string, int> VAR2ID;
@@ -151,76 +151,6 @@ static void validate_mask_input(const CNF &cnf, const vector<int> &ids)
         throw invalid_argument("branch variables must be distinct ordinary IDs");
 }
 
-void calculate_variants(CNF &cnf, vector<int> &ids, vector<int> &clauses_mask,
-                        vector<int> &reduced_clauses,
-                        vector<int> &no_clauses_mask)
-{
-    validate_mask_input(cnf, ids);
-    int k = ids.size();
-    size_t count = size_t(1) << k;
-    if (clauses_mask.size() != count || reduced_clauses.size() != count ||
-        no_clauses_mask.size() != count)
-        throw invalid_argument("incorrect assignment mask buffer size");
-
-    map<int, int> id2ind;
-
-    for (int i = 0; i < k; ++i)
-        id2ind[ids[i]] = i;
-
-    for (int mask = 0; mask < (1 << k); ++mask)
-    {
-        int reduced = 0;
-
-        int tc_mask = 0;
-        int no_mask = 0;
-
-        // for (Clause *c : clauses)
-        for (int clause_ind = 0; clause_ind < (int)cnf.clauses.size();
-             ++clause_ind)
-        {
-            Clause *c = cnf.clauses[clause_ind];
-
-            bool find_another_literal = false;
-            bool find_1 = false;
-
-            for (Literal *l : c->lits)
-            {
-                if (id2ind.count(l->id) != 0)
-                {
-                    if (((mask >> id2ind[l->id]) & 1) ^ l->inv)
-                    {
-                        find_1 = true;
-                        break;
-                    }
-                }
-                else
-                {
-                    find_another_literal = true;
-                }
-            }
-
-            if (find_1 || !find_another_literal)
-            {
-                reduced++;
-            }
-
-            if (find_1)
-            {
-                tc_mask ^= (1 << clause_ind);
-            }
-
-            if (!find_1 && !find_another_literal)
-            {
-                no_mask ^= (1 << clause_ind);
-            }
-        }
-
-        clauses_mask[mask] = tc_mask;
-        no_clauses_mask[mask] = no_mask;
-        reduced_clauses[mask] = reduced;
-    }
-}
-
 int count_set_bits(int n)
 {
     int cnt = 0;
@@ -232,82 +162,108 @@ int count_set_bits(int n)
     return cnt;
 }
 
-ProofNode CNF::branch(vector<int> ids)
+namespace {
+struct AssignmentSelection
 {
-    validate_mask_input(*this, ids);
-    int k = ids.size();
+    vector<int> retained_masks;
+    vector<int> decreases;
+    map<int, int> subsumptions;
+};
 
-    vector<int> branch;
+AssignmentSelection select_assignments(const CNF &cnf, const vector<int> &ids)
+{
+    validate_mask_input(cnf, ids);
+    const int assignment_count = 1 << ids.size();
+    const int clause_count = cnf.clauses.size();
+    map<int, int> variable_index;
+    for (int i = 0; i < (int)ids.size(); ++i)
+        variable_index[ids[i]] = i;
 
-    vector<int> clauses_mask(1 << k);
-    vector<int> reduced_clauses(1 << k);
-    vector<int> no_clauses_mask(1 << k);
-
-    calculate_variants(*this, ids, clauses_mask, reduced_clauses,
-                       no_clauses_mask);
-
-    std::map<int, int> current_subsumptions;
-    vector<int> valid_masks;
-
-    for (int mask = 0; mask < (1 << k); ++mask)
+    struct AssignmentScore
     {
-        bool is_subset = false;
-
-        int max_val = (*this).clauses.size() -
-                      count_set_bits(no_clauses_mask[mask]); // YES + "?"
-
-        for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
+        int satisfied_mask = 0;
+        int satisfied_count = 0;
+        int empty_count = 0;
+    };
+    vector<AssignmentScore> scores(assignment_count);
+    for (int mask = 0; mask < assignment_count; ++mask)
+    {
+        auto &score = scores[mask];
+        for (int index = 0; index < clause_count; ++index)
         {
-            if (mask == other_mask)
-                continue;
-
-            if (clauses_mask[mask] == clauses_mask[other_mask])
+            bool satisfied = false;
+            bool has_unassigned_literal = false;
+            for (const Literal *literal : cnf.clauses[index]->lits)
             {
-                if (other_mask >= mask)
+                auto variable = variable_index.find(literal->id);
+                if (variable == variable_index.end())
+                    has_unassigned_literal = true;
+                else if (bool((mask >> variable->second) & 1) != literal->inv)
                 {
-                    continue;
+                    satisfied = true;
+                    break;
                 }
             }
 
-            if (count_set_bits(clauses_mask[other_mask]) >= max_val)
+            if (satisfied)
             {
-                if ((*this).clauses.size() -
-                            count_set_bits(no_clauses_mask[other_mask]) <=
-                        count_set_bits(clauses_mask[mask]) &&
-                    other_mask > mask)
-                {
-                    continue;
-                }
-
-                current_subsumptions[mask] = other_mask;
-                is_subset = true;
-                break;
+                score.satisfied_mask |= 1 << index;
+                ++score.satisfied_count;
             }
-
-            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
-            {
-                current_subsumptions[mask] = other_mask;
-                is_subset = true;
-                break;
-            }
-        }
-
-        if (!is_subset)
-        {
-            branch.push_back(reduced_clauses[mask]);
-            valid_masks.push_back(mask);
+            else if (!has_unassigned_literal)
+                ++score.empty_count;
         }
     }
 
-    ProofNode node(branch);
-    node.formula_snapshot = this->get_cert_snapshot();
-    node.subsumptions = current_subsumptions;
+    AssignmentSelection result;
+    for (int mask = 0; mask < assignment_count; ++mask)
+    {
+        const auto &score = scores[mask];
+        int max_satisfied = clause_count - score.empty_count;
+        bool dominated = false;
+        for (int other = 0; other < assignment_count; ++other)
+        {
+            const auto &competing = scores[other];
+            // Among assignments with the same satisfied clauses, keep the
+            // lower mask. The same ordering breaks ties in mutual dominance.
+            if (other == mask ||
+                (score.satisfied_mask == competing.satisfied_mask && other > mask))
+                continue;
+            if (competing.satisfied_count >= max_satisfied)
+            {
+                if (clause_count - competing.empty_count <= score.satisfied_count &&
+                    other > mask)
+                    continue;
+            }
+            else if (!is_A_subset_of_B(score.satisfied_mask, competing.satisfied_mask))
+                continue;
+
+            result.subsumptions.emplace(mask, other);
+            dominated = true;
+            break;
+        }
+        if (!dominated)
+        {
+            result.retained_masks.push_back(mask);
+            result.decreases.push_back(score.satisfied_count + score.empty_count);
+        }
+    }
+    return result;
+}
+} // namespace
+
+ProofNode CNF::branch(vector<int> ids)
+{
+    auto selected = select_assignments(*this, ids);
+    ProofNode node(move(selected.decreases));
+    node.formula_snapshot = get_cert_snapshot();
+    node.subsumptions = move(selected.subsumptions);
 
     node.type = "enumeration";
 
     map<int, int> id_to_index;
-    for (int i = 0; i < k; ++i) id_to_index[ids[i]] = i;
-    for (int mask : valid_masks)
+    for (int i = 0; i < (int)ids.size(); ++i) id_to_index[ids[i]] = i;
+    for (int mask : selected.retained_masks)
     {
         vector<vector<int>> residual;
         int offset = 0;
@@ -765,66 +721,11 @@ bool check_group_validity(const vector<int>& group_masks, int k, string& diag)
     return true;
 }
 
-ProofNode CNF::branch_group(vector<int> ids, int max_groups,
-                            bool construct_proof, double q)
+ProofNode CNF::branch_group(vector<int> ids, bool construct_proof, double q)
 {
-    validate_mask_input(*this, ids);
-    if (max_groups < -1) throw invalid_argument("invalid group-count limit");
+    auto selected = select_assignments(*this, ids);
     int k = ids.size();
-    vector<int> clauses_mask(1 << k), reduced_clauses(1 << k), no_clauses_mask(1 << k);
-    calculate_variants(*this, ids, clauses_mask, reduced_clauses, no_clauses_mask);
-    vector<int> masks;
-
-    std::map<int, int> current_subsumptions;
-
-    for (int mask = 0; mask < (1 << k); ++mask)
-    {
-        bool is_subset = false;
-
-        int max_val = (*this).clauses.size() -
-                      count_set_bits(no_clauses_mask[mask]); // YES + "?"
-
-        for (int other_mask = 0; other_mask < (1 << k); ++other_mask)
-        {
-            if (mask == other_mask)
-                continue;
-
-            if (clauses_mask[mask] == clauses_mask[other_mask])
-            {
-                if (other_mask >= mask)
-                {
-                    continue;
-                }
-            }
-
-            if (count_set_bits(clauses_mask[other_mask]) >= max_val)
-            {
-                if (((*this).clauses.size() -
-                         count_set_bits(no_clauses_mask[other_mask]) <=
-                     count_set_bits(clauses_mask[mask])) &&
-                    (other_mask > mask))
-                {
-                    continue;
-                }
-
-                current_subsumptions[mask] = other_mask;
-                is_subset = true;
-                break;
-            }
-
-            if (is_A_subset_of_B(clauses_mask[mask], clauses_mask[other_mask]))
-            {
-                current_subsumptions[mask] = other_mask;
-                is_subset = true;
-                break;
-            }
-        }
-
-        if (!is_subset)
-        {
-            masks.push_back(mask);
-        }
-    }
+    const auto &masks = selected.retained_masks;
 
     struct GroupWitness {
         string rule;
@@ -904,7 +805,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
         weighted.push_back({move(coverage), best_weight});
     });
 
-    GroupCover cover = minimum_group_cover(masks.size(), weighted, max_groups);
+    GroupCover cover = minimum_group_cover(masks.size(), weighted);
     if (cover.groups.empty())
     {
         ProofNode call({0});
@@ -915,7 +816,7 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
     ProofNode node;
     node.type = construct_proof ? "enumeration" : "leaf";
     node.formula_snapshot = this->get_cert_snapshot();
-    node.subsumptions = move(current_subsumptions);
+    node.subsumptions = move(selected.subsumptions);
     // Overlapping groups are recorded here and in each alternative.
     for (int index : cover.groups)
     {
@@ -1133,7 +1034,7 @@ void print_cnf(CNF &cnf)
 static unordered_map<string, long long> used_node_storage;
 unordered_map<string, long long> *used_nodes = &used_node_storage;
 
-void preprocess(int maximum_clause_size)
+void preprocess()
 {
     used_nodes->clear();
     ID2VAR[0] = "?";
@@ -1141,7 +1042,6 @@ void preprocess(int maximum_clause_size)
     ID2VAR[1] = "?+";
     VAR2ID["?+"] = 1;
 
-    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = maximum_clause_size;
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
 
     POSSIBLE_LITERALS = {{3, 1, SINGLETON},
@@ -1353,34 +1253,6 @@ vector<CNF *> add_new_var_universal(CNF *cnf, string v_name, int i, int j,
                         }
                     }
 
-                    if (MaxSATSettings.MAXIMUM_CLAUSE_SIZE != -1)
-                    {
-                        bool too_many_lits = false;
-
-                        for (Clause *c : now_cnf->clauses)
-                        {
-                            if (c->lits.size() > MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 ||
-                                (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1 &&
-                                 c->lits.find(&UNKNOWN_LITERAL) == c->lits.end()))
-                            {
-                                too_many_lits = true;
-                                break;
-                            }
-                        }
-
-                        if (too_many_lits)
-                            continue;
-
-                        for (Clause *c : now_cnf->clauses)
-                        {
-                            if (c->lits.size() == MaxSATSettings.MAXIMUM_CLAUSE_SIZE + 1)
-                            {
-                                c->lits.erase(&UNKNOWN_LITERAL);
-                                c->tail_atoms.clear();
-                            }
-                        }
-                    }
-
                     string now_cnf_str = cnf_to_max_string(now_cnf);
 
                     if (used_nodes->find(now_cnf_str) == used_nodes->end())
@@ -1499,7 +1371,7 @@ DivideResult empty_divide(CNF *cnf, double q)
 
     auto child_weight = [&](CNF *candidate)
     {
-        return branching_weight(candidate->branch_group(ids, -1, false, q).vec, q);
+        return branching_weight(candidate->branch_group(ids, false, q).vec, q);
     };
 
     for (int i = 0; i < (int)cnf->clauses.size(); ++i)

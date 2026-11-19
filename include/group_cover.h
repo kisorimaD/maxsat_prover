@@ -20,7 +20,6 @@ struct GroupCover {
     std::vector<int> groups; // indices in the input candidate list
 };
 
-// Exact weighted set cover. Groups may overlap. -1 means no group-count limit.
+// Exact weighted set cover. Groups may overlap.
 GroupCover minimum_group_cover(int assignment_count,
-                              const std::vector<WeightedGroup> &candidates,
-                              int max_groups = -1);
+                              const std::vector<WeightedGroup> &candidates);

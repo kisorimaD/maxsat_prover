@@ -24,9 +24,6 @@ void test_safety()
     for (int i = 0; i < MAX_MASK_BITS; ++i)
         formula->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false)}));
     assert(!formula->branch({2}).alternatives.empty());
-    ProofNode no_cover = formula->branch_group({2}, 0, true);
-    assert(no_cover.vec == vector<int>({0}));
-    assert(no_cover.formula_snapshot == formula->get_cert_snapshot());
     formula->clauses.push_back(new Clause(vector<Literal*>{intern_literal(2, false)}));
     rejected([&] { formula->branch({2}); });
     rejected([&] { formula->branch_group({2}); });
@@ -139,13 +136,10 @@ void test_group_cover()
     GroupCover cover = minimum_group_cover(3, overlapping);
     assert(cover.groups == vector<int>({0, 1}));
     assert(fabsl(cover.weight - .7L) < 1e-15L);
-    assert(!isfinite(minimum_group_cover(3, overlapping, 1).weight));
     assert(minimum_group_cover(0, {}).weight == 0);
     assert(!isfinite(minimum_group_cover(3, {}).weight));
-    assert(!isfinite(minimum_group_cover(3, overlapping, 0).weight));
 
-    // Independent exhaustive oracle for the weighted-cover optimizer,
-    // including duplicate coverage, overlap and bounds on the group count.
+    // Independent exhaustive oracle for duplicate coverage and overlap.
     mt19937 rng(1741);
     for (int trial = 0; trial < 80; ++trial)
     {
@@ -158,42 +152,36 @@ void test_group_cover()
                 if (image & (1 << row)) rows.push_back(row);
             candidates.push_back({rows, branching_weight({1 + int(rng() % 12)}, 1.2872)});
         }
-        for (int limit : {-1, 1, 2, 3})
+        long double optimum = numeric_limits<long double>::infinity();
+        for (int subset = 1; subset < (1 << candidates.size()); ++subset)
         {
-            long double optimum = numeric_limits<long double>::infinity();
-            for (int subset = 1; subset < (1 << candidates.size()); ++subset)
-            {
-                int covered = 0, count = 0;
-                long double weight = 0;
-                for (int i = 0; i < (int)candidates.size(); ++i)
-                    if (subset & (1 << i))
-                    {
-                        ++count;
-                        weight += candidates[i].weight;
-                        for (int row : candidates[i].coverage) covered |= 1 << row;
-                    }
-                if (covered == 15 && (limit < 0 || count <= limit))
-                    optimum = min(optimum, weight);
-            }
-            GroupCover actual = minimum_group_cover(4, candidates, limit);
-            assert((!isfinite(optimum) && !isfinite(actual.weight)) ||
-                   fabsl(actual.weight - optimum) < 1e-12L);
+            int covered = 0;
+            long double weight = 0;
+            for (int i = 0; i < (int)candidates.size(); ++i)
+                if (subset & (1 << i))
+                {
+                    weight += candidates[i].weight;
+                    for (int row : candidates[i].coverage) covered |= 1 << row;
+                }
+            if (covered == 15)
+                optimum = min(optimum, weight);
         }
+        GroupCover actual = minimum_group_cover(4, candidates);
+        assert((!isfinite(optimum) && !isfinite(actual.weight)) ||
+               fabsl(actual.weight - optimum) < 1e-12L);
     }
     // Actual CNF: overlap improves even over disjoint covers that are allowed
     // to add dominated rows. All children are constructive, with no imports.
     bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
-    int saved_width = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
-    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = -1;
     const double q = 1.2872;
     CNF *formula = create_dummy_cnf({
         {2, 0}, {4}, {2, 3, 0}, {4, 0}, {-3},
         {-2, 3, -4, 0}, {-4, 0}, {2}, {-2, -3, 0}, {-3, -4, 0}});
-    ProofNode proof = formula->branch_group({2, 3, 4}, -1, true, q);
+    ProofNode proof = formula->branch_group({2, 3, 4}, true, q);
     assert(proof.vec == vector<int>({6, 8}));
     assert(proof.cover_groups == vector<vector<int>>({{0, 1, 4, 5}, {5, 7}}));
-    assert(formula->branch_group({2, 3, 4}, -1, false, q).vec == proof.vec);
+    assert(formula->branch_group({2, 3, 4}, false, q).vec == proof.vec);
     int required = 0;
     for (int row = 0; row < 8; ++row)
         if (!proof.subsumptions.count(row)) required |= 1 << row;
@@ -272,7 +260,13 @@ void test_group_cover()
     }
     delete_dummy_cnf(formula);
     MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved_assumptions;
-    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = saved_width;
+
+    // A group with zero decrease and no continuation leaves a recursive call.
+    CNF *unchanged = create_dummy_cnf({{3, 0}, {3, 0}, {-3, 0}, {-3, 0}});
+    ProofNode no_cover = unchanged->branch_group({}, true, q);
+    assert(no_cover.vec == vector<int>({0}));
+    assert(no_cover.formula_snapshot == unchanged->get_cert_snapshot());
+    delete_dummy_cnf(unchanged);
     // Four selected variables, all 16 assignments undominated. This used to
     // require enumerating partitions of a 16-element set.
     vector<vector<int>> four_snapshot;
@@ -283,9 +277,9 @@ void test_group_cover()
             four_snapshot.push_back({-var, 0});
         }
     CNF *four = create_dummy_cnf(four_snapshot);
-    ProofNode four_proof = four->branch_group({2, 3, 4, 5}, -1, true, q);
+    ProofNode four_proof = four->branch_group({2, 3, 4, 5}, true, q);
     assert(four_proof.subsumptions.empty());
-    assert(four->branch_group({2, 3, 4, 5}, -1, false, q).vec == four_proof.vec);
+    assert(four->branch_group({2, 3, 4, 5}, false, q).vec == four_proof.vec);
     delete_dummy_cnf(four);
     cout << "Substitution groups and exact weighted cover tests passed\n";
 }
@@ -347,8 +341,8 @@ void test_weighted_search()
     assert(high.rule == "lemma4" && high.vec == vector<int>({2, 5}));
     for (double target : {1.233, q, 1.5})
     {
-        ProofNode group = input->branch_group({2, 3}, -1, false, target);
-        ProofNode proof = input->branch_group({2, 3}, -1, true, target);
+        ProofNode group = input->branch_group({2, 3}, false, target);
+        ProofNode proof = input->branch_group({2, 3}, true, target);
         assert(group.vec == proof.vec);
     }
     ProofNode lemma4_reduction_bound = analyze_residual(*input, 1.5);
