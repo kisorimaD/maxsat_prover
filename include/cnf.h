@@ -31,15 +31,6 @@ struct MaxSATSettingsType
 
 extern MaxSATSettingsType MaxSATSettings;
 
-struct ProofNode;
-
-struct GroupWitness {
-    std::string rule;            // "basic", "lemma2", "lemma3", "double_lemma3", "lemma4"
-    // Constructive processing of the materialized residual formula.
-    vector<int> claimed_vector;
-    std::shared_ptr<const ProofNode> residual_proof;
-};
-
 struct ProofAlternative;
 
 struct ProofNode {
@@ -62,8 +53,6 @@ struct ProofNode {
 
     std::map<int, int> subsumptions; 
     
-    std::vector<GroupWitness> group_witnesses;
-
     int reduced_cnt_true = 0;
     int reduced_cnt_false = 0;
     int offset_true = 0;

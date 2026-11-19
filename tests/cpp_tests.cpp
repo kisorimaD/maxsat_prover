@@ -1,6 +1,5 @@
 #include "cnf.h"
 #include "group_cover.h"
-#include "strategy_cache.h"
 #include "residual_search.h"
 
 #include <algorithm>
@@ -291,132 +290,6 @@ void test_group_cover()
     cout << "Substitution groups and exact weighted cover tests passed\n";
 }
 
-void test_strategy_cache()
-{
-    const double q = 1.2872;
-    bool saved_assumptions = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
-    int saved_width = MaxSATSettings.MAXIMUM_CLAUSE_SIZE;
-    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
-    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = -1;
-    set_strategy_cache_enabled(true);
-    CNF *first = create_dummy_cnf({{2, 0}, {-2, 0}});
-    CNF *renamed = create_dummy_cnf({{2, 0}, {-2, 0}});
-    ProofNode original = analyze_residual(*first, q);
-    assert(strategy_cache_stats().misses == 1);
-    ProofNode hit = analyze_residual(*renamed, q);
-    assert(strategy_cache_stats().hits == 1);
-    assert(hit.formula_snapshot == renamed->get_cert_snapshot());
-    assert(hit.formula_snapshot != original.formula_snapshot);
-    assert(hit.vec == original.vec);
-    assert(hit.children.size() == 1 && hit.children[0].formula_snapshot.size() == 1);
-    std::set<int> current_tails;
-    for (const auto &clause : renamed->get_cert_snapshot())
-        for (int literal : clause)
-            if (literal >= SNAP_TAIL_ANY_BASE) current_tails.insert(literal);
-    for (int literal : hit.children[0].formula_snapshot[0])
-        assert(current_tails.count(literal));
-    hit.children[0].formula_snapshot.clear();
-    assert(!analyze_residual(*renamed, q).children[0].formula_snapshot.empty());
-
-    auto misses = strategy_cache_stats().misses;
-    analyze_residual(*renamed, 1.5);
-    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
-    analyze_residual(*renamed, q);
-    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = 3;
-    analyze_residual(*renamed, q);
-    assert(strategy_cache_stats().misses == misses + 3);
-    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = false;
-    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = -1;
-
-    // Tail type, sharing, and clause order are part of the key.
-    CNF *typed = new CNF(*first);
-    typed->clauses[0]->lits.erase(&UNKNOWN_LITERAL);
-    typed->clauses[0]->lits.insert(&UNKNOWN_NOT_EMPTY_LITERAL);
-    typed->clauses[0]->tail_atoms.begin()->second = true;
-    CNF *shared = new CNF(*first);
-    shared->clauses[1]->tail_atoms = shared->clauses[0]->tail_atoms;
-    CNF *reordered = new CNF(*first);
-    reverse(reordered->clauses.begin(), reordered->clauses.end());
-    misses = strategy_cache_stats().misses;
-    analyze_residual(*typed, q);
-    analyze_residual(*shared, q);
-    analyze_residual(*reordered, q);
-    assert(strategy_cache_stats().misses == misses + 3);
-    destroy_cnf(typed);
-    destroy_cnf(shared);
-    destroy_cnf(reordered);
-    delete_dummy_cnf(first);
-    delete_dummy_cnf(renamed);
-
-    // Check that the full RR chain is identical with and without caching.
-    CNF *cascade = create_dummy_cnf({{2, 3}, {-2, 3}, {-3, 0}});
-    set_strategy_cache_enabled(false);
-    ProofNode uncached = analyze_residual(*cascade, q);
-    set_strategy_cache_enabled(true);
-    ProofNode cached = analyze_residual(*cascade, q);
-    ProofNode repeated = analyze_residual(*cascade, q);
-    assert(strategy_cache_stats().hits == 1);
-    assert(cached.vec == uncached.vec && repeated.vec == uncached.vec);
-    assert(cached.formula_snapshot == cascade->get_cert_snapshot());
-    assert(cached.rule == "RR2" && cached.children[0].rule == "RR2");
-    assert(cached.children[0].children[0].formula_snapshot ==
-           uncached.children[0].children[0].formula_snapshot);
-    delete_dummy_cnf(cascade);
-
-    CNF *group_input = create_dummy_cnf({
-        {0, 2, 3}, {0, 2, 4}, {0, 2}, {0, -2, 3}, {0, -2, 4},
-        {0, 3}, {0, 3}, {-3}, {0, -4}, {0, -4}});
-    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = true;
-    set_strategy_cache_enabled(false);
-    ProofNode without_cache = group_input->branch_group({2, 3, 4}, -1, true, q);
-    set_strategy_cache_enabled(true);
-    ProofNode with_cache = group_input->branch_group({2, 3, 4}, -1, true, q);
-    function<bool(const ProofNode &, const ProofNode &)> same_proof;
-    same_proof = [&](const ProofNode &a, const ProofNode &b) {
-        if (a.type != b.type || a.rule != b.rule || a.pivot_id != b.pivot_id ||
-            a.vec != b.vec || a.formula_snapshot != b.formula_snapshot ||
-            a.cover_groups != b.cover_groups ||
-            a.reduced_cnt_true != b.reduced_cnt_true || a.reduced_cnt_false != b.reduced_cnt_false ||
-            a.offset_true != b.offset_true || a.offset_false != b.offset_false ||
-            a.children.size() != b.children.size() || a.alternatives.size() != b.alternatives.size())
-            return false;
-        for (size_t i = 0; i < a.children.size(); ++i)
-            if (!same_proof(a.children[i], b.children[i])) return false;
-        for (size_t i = 0; i < a.alternatives.size(); ++i)
-        {
-            const auto &left = a.alternatives[i], &right = b.alternatives[i];
-            if (left.offset != right.offset || left.decrease != right.decrease ||
-                left.represented_masks != right.represented_masks ||
-                bool(left.proof) != bool(right.proof)) return false;
-            if (left.proof && !same_proof(*left.proof, *right.proof)) return false;
-        }
-        return true;
-    };
-    assert(same_proof(without_cache, with_cache));
-    assert(same_proof(with_cache, group_input->branch_group({2, 3, 4}, -1, true, q)));
-    assert(strategy_cache_stats().hits > 0);
-    delete_dummy_cnf(group_input);
-
-    clear_strategy_cache();
-    for (int i = 0; i < 2100; ++i)
-    {
-        CNF formula;
-        formula.clauses.push_back(new Clause(vector<Literal *>{intern_literal(100 + i, false)}));
-        cached_strategy_search(formula, q, [&] {
-            ProofNode call({0});
-            call.formula_snapshot = formula.get_cert_snapshot();
-            return call;
-        });
-        delete formula.clauses[0];
-    }
-    assert(strategy_cache_stats().entries <= 2048);
-    assert(strategy_cache_stats().evictions > 0);
-    MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS = saved_assumptions;
-    MaxSATSettings.MAXIMUM_CLAUSE_SIZE = saved_width;
-    clear_strategy_cache();
-    cout << "Residual strategy cache tests passed\n";
-}
-
 void test_step51()
 {
     bool saved = MaxSATSettings.ALLOW_NAMED_ASSUMPTIONS;
@@ -472,8 +345,6 @@ void test_weighted_search()
     ProofNode high = analyze_residual(*input, q);
     assert(low.rule == "lemma3" && low.vec == vector<int>({1, 8}));
     assert(high.rule == "lemma4" && high.vec == vector<int>({2, 5}));
-    // Repeated changes of q must not reuse a previous target's choice.
-    assert(analyze_residual(*input, 1.233).vec == low.vec);
     for (double target : {1.233, q, 1.5})
     {
         ProofNode group = input->branch_group({2, 3}, -1, false, target);
@@ -572,6 +443,11 @@ void test_constructive_reductions()
     vector<vector<int>> cascade_expected = {{0}};
     assert(sorted_snapshot(cascade.cnf) == cascade_expected);
     destroy_cnf(cascade.cnf);
+    ProofNode cascade_proof = analyze_residual(*cascade_input, 1.2872);
+    assert(cascade_proof.vec == vector<int>({2}));
+    assert(cascade_proof.formula_snapshot == cascade_input->get_cert_snapshot());
+    assert(cascade_proof.rule == "RR2" && cascade_proof.children.size() == 1);
+    assert(cascade_proof.children[0].rule == "RR2");
     delete_dummy_cnf(cascade_input);
 
     CNF *lemma3_input = create_dummy_cnf({{0, 4}, {0, -4}, {0, -4}});
@@ -641,7 +517,6 @@ int main()
 {
     preprocess();
     test_weighted_search();
-    test_strategy_cache();
     test_group_cover();
     test_constructive_reductions();
     test_safety();

@@ -1,7 +1,6 @@
 #include "cli.h"
 #include "cnf.h"
 #include "cert_logger.h"
-#include "strategy_cache.h"
 
 #include <algorithm>
 #include <cmath>
@@ -227,7 +226,6 @@ void print_help_universal()
     cout << "   head [n]                                \t\tВывести [n] первых вариантов сейчас\n";
     cout << "   print [i]                               \t\tВывести [i] вариант и разобрать по переменным\n";
     cout << "   stats                                   \t\tВывести минимум и максимум branching factor среди оставшихся вариантов\n";
-    cout << "   cache_stats                             \t\tСтатистика кеша остаточных формул\n";
     cout << "   factor [vector]                         \t\tВывести branching factor для заданного вектора\n";
     cout << "   setposfunc [need_names] [no_names]      \t\tЗафиксировать позиционную функцию, которая будет выводиться в print\n";
     cout << "   empty_divide [i]                        \t\tПрименить empty_divide к [i] формуле (или ко всем, если i = -1)\n";
@@ -738,16 +736,6 @@ void run_interactive()
             cout << "Минимальный Branching Factor:  " << min_bf << "\n";
             cout << "Максимальный Branching Factor: " << max_bf << "\n\n";
 
-            continue;
-        }
-
-        if (command == "cache_stats")
-        {
-            auto stats = strategy_cache_stats();
-            cout << "Strategy cache: hits=" << stats.hits
-                 << ", misses=" << stats.misses
-                 << ", entries=" << stats.entries
-                 << ", evictions=" << stats.evictions << "\n\n";
             continue;
         }
 

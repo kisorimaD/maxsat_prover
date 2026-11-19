@@ -1,8 +1,9 @@
 #include "residual_search.h"
-#include "strategy_cache.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <stdexcept>
 
 using namespace std;
 
@@ -147,25 +148,26 @@ ProofNode choose_residual_continuation(const CNF &formula, double q)
 
 ProofNode analyze_residual(const CNF &formula, double q)
 {
-    return cached_strategy_search(formula, q, [&] {
-        ReductionFixpoint reduced = reduce_to_fixpoint(formula);
-        OwnedCNF owner(reduced.cnf, destroy_cnf);
-        ProofNode child = reduced.total_decrease == 0
-                              ? choose_residual_continuation(*owner, q)
-                              : call_on(*owner);
-        for (auto it = reduced.steps.rbegin(); it != reduced.steps.rend(); ++it)
-        {
-            ProofNode parent;
-            parent.type = "reduction";
-            parent.rule = it->rule;
-            parent.pivot_id = it->pivot_id;
-            parent.formula_snapshot = it->formula_snapshot;
-            parent.vec = child.vec;
-            for (int &decrease : parent.vec) decrease += it->decrease;
-            parent.tau = branching_factor(parent.vec);
-            parent.children.push_back(move(child));
-            child = move(parent);
-        }
-        return child;
-    });
+    if (!isfinite(q) || q <= 1.0)
+        throw invalid_argument("invalid strategy search target");
+
+    ReductionFixpoint reduced = reduce_to_fixpoint(formula);
+    OwnedCNF owner(reduced.cnf, destroy_cnf);
+    ProofNode child = reduced.total_decrease == 0
+                          ? choose_residual_continuation(*owner, q)
+                          : call_on(*owner);
+    for (auto it = reduced.steps.rbegin(); it != reduced.steps.rend(); ++it)
+    {
+        ProofNode parent;
+        parent.type = "reduction";
+        parent.rule = it->rule;
+        parent.pivot_id = it->pivot_id;
+        parent.formula_snapshot = it->formula_snapshot;
+        parent.vec = child.vec;
+        for (int &decrease : parent.vec) decrease += it->decrease;
+        parent.tau = branching_factor(parent.vec);
+        parent.children.push_back(move(child));
+        child = move(parent);
+    }
+    return child;
 }

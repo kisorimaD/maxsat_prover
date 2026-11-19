@@ -826,6 +826,11 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
         }
     }
 
+    struct GroupWitness {
+        string rule;
+        vector<int> claimed_vector;
+        shared_ptr<const ProofNode> residual_proof;
+    };
     struct Candidate {
         vector<int> rows;
         vector<int> vec;
@@ -866,8 +871,6 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
             }
         }
 
-        // Each group is analyzed once. Shared residual formulas still go through
-        // the formula cache, independent of their assignment images.
         auto residual_proof = make_shared<ProofNode>(
             analyze_residual(*group_residual.cnf, q));
         GroupWitness search_witness;
@@ -919,7 +922,6 @@ ProofNode CNF::branch_group(vector<int> ids, int max_groups,
         const Candidate &candidate = candidates[index];
         node.cover_groups.push_back(candidate.rows);
         node.vec.insert(node.vec.end(), candidate.vec.begin(), candidate.vec.end());
-        node.group_witnesses.push_back(candidate.witness);
         if (!construct_proof) continue;
         GroupResidual residual = materialize_group_residual(*this, ids, candidate.rows);
         if (!residual.valid)
