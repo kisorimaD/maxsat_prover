@@ -1,9 +1,8 @@
 # MaxSAT Prover
 
 A certificate generator for the `(3,2)`-literal bottleneck in the MaxSAT
-branching analysis described in `.docs/main.pdf`. The C++ search enumerates
-local templates, enumerates assignments, and searches for groups with cheap
-continuations on their residual formulas.
+branching analysis. The C++ generator enumerates local templates and assignments, then searches for
+groups with low-cost continuations on their residual formulas.
 An independent Python checker validates coverage, local optimum identities
 and the branching inequality using exact rational arithmetic.
 
@@ -33,6 +32,40 @@ python3 verify_certificate.py proof_tree.json verification_assumptions.json
 Starting `maxsat_prover interactive` overwrites `pre_certificate.jsonl`. The
 test suite and `--help` preserve it. `make certificate`
 also overwrites the assembled certificate and assumption log.
+
+### How `solve.txt` works
+
+Each refinement replaces selected unresolved
+templates with their cases. Each search records the strategies that meet the
+target and removes those templates from the set. [`solve.txt`](solve.txt)
+
+| Lines | Command | What it does |
+| --- | --- | --- |
+| 1 | `set 1.2872` | Set the branching target `q` for strategy search. |
+| 3 | `add x 3 2 a` | Start with three clauses containing `x` and two containing `¬x`, each with an arbitrary tail. `a` is shorthand for `ANY`. |
+| 4–6 | `addpos y` | Expose `y` from a tail in a clause containing `¬x`. |
+| 7 | `branch` | Search for strategies on the remaining templates. Try plain assignment branching first, then grouped branching on the cases still unresolved. |
+| 8–10 | `addpos z` | Expose `z` from a tail in a clause containing `¬x` with the positive literal `y` forbidden. |
+| 12 | `branch` | Search again after exposing `z`. |
+| 13 | `empty_divide -1` | For each remaining template with an arbitrary tail, choose the empty-versus-nonempty split that minimizes the worse child weight. |
+| 14 | `branch` | Search the cases left after the tail split. |
+| 16 | `exit` | End the generator session. |
+
+Each `addpos` command reads two lines after the variable name. The first lists
+required literals and the second lists forbidden literals. `-x` denotes `¬x`,
+so the empty line after the first `-x` means the exposure of `y` has no
+forbidden literals. For each eligible template, the command uses the first
+matching clause and enumerates the allowed degree classes and placements of the
+new variable's occurrences.
+
+### Quantities used in the search and certificate
+
+| Code term | Meaning |
+| --- | --- |
+| `offset` | Additive contribution to the MAX-SAT optimum for a transition, measured in satisfied clauses. |
+| `decrease` | Reduction in the clause-count parameter `m` of the recursive instance. A clause that becomes empty can contribute to `decrease` with zero `offset`. |
+| `branching_weight` | Weight `W_q(v) = sum(q^(-d) for d in v)` of a vector `v` of accumulated decreases at the fixed target `q`. The target test requires positive decreases and weight at most one. |
+| `branching_factor` | For a progressing branching vector, the value at which its weight is one. |
 
 ## Verification contract
 

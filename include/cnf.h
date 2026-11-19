@@ -36,8 +36,8 @@ struct ProofNode {
     std::string type;       // "leaf", "reduction", "branch"
     std::string rule;       // Название правила (например, "RR3")
     int pivot_id = -1;      // Переменная, по которой идет ветвление/редукция
-    std::vector<int> vec;   // Итоговый вектор редукций (например, {3, 3})
-    double tau = 100.0;     // Итоговый branching factor
+    std::vector<int> vec;   // Accumulated clause decreases at recursive-call leaves.
+    double tau = 100.0;     // Branching factor for vec.
     // Imported branching case serialized independently of the bound at q.
     std::vector<int> assumption_branch_vector;
    
@@ -52,8 +52,8 @@ struct ProofNode {
 
     std::map<int, int> subsumptions; 
     
-    int reduced_cnt_true = 0;
-    int reduced_cnt_false = 0;
+    int decrease_true = 0;
+    int decrease_false = 0;
     int offset_true = 0;
     int offset_false = 0;
 
@@ -63,8 +63,8 @@ struct ProofNode {
 };
 
 struct ProofAlternative {
-    int offset = 0;          // clauses certainly satisfied in this alternative
-    int decrease = 0;        // clauses removed from the global m-parameter
+    int offset = 0;          // Additive contribution to the MAX-SAT objective.
+    int decrease = 0;        // Drop in the recursive instance's clause count m.
     std::vector<int> represented_masks;
     std::shared_ptr<ProofNode> proof;
 };

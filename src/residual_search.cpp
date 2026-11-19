@@ -134,8 +134,8 @@ ProofNode choose_residual_continuation(const CNF &formula, double q)
             candidate.type = "branch";
             candidate.pivot_id = id;
             candidate.formula_snapshot = best.formula_snapshot;
-            candidate.reduced_cnt_true = true_decrease;
-            candidate.reduced_cnt_false = false_decrease;
+            candidate.decrease_true = true_decrease;
+            candidate.decrease_false = false_decrease;
             candidate.offset_true = st.pos_count;
             candidate.offset_false = st.neg_count;
             candidate.children = {call_on(*true_residual), call_on(*false_residual)};

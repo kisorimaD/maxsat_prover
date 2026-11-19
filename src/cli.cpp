@@ -686,21 +686,22 @@ void run_interactive()
 
         if (command == "printworst")
         {
-            long double worst = -1;
-            int worst_ind = -1;
+            long double worst_weight = -1;
+            int worst_index = -1;
             for (int i = 0; i < cur.size(); ++i)
             {
-                long double gfactor = branching_weight(cur.at(i)->branch_group(ids, false, C).vec, C);
-                
-                if (gfactor > worst)
+                long double weight = branching_weight(
+                    cur.at(i)->branch_group(ids, false, C).vec, C);
+
+                if (weight > worst_weight)
                 {
-                    worst = gfactor;
-                    worst_ind = i;
+                    worst_weight = weight;
+                    worst_index = i;
                 }
             }
 
-            cout << "Formula: " << worst_ind << '\n';
-            cout << "| W_q = " << worst << "\n\n";
+            cout << "Formula: " << worst_index << '\n';
+            cout << "| W_q = " << worst_weight << "\n\n";
 
             continue;
         }

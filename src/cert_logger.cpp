@@ -177,11 +177,11 @@ std::string CertLogger::proof_node_to_json(const ProofNode &node)
            << ",\"variable\":" << node.pivot_id
            << ",\"alternatives\":["
            << "{\"offset\":" << node.offset_true
-           << ",\"decrease\":" << node.reduced_cnt_true
+           << ",\"decrease\":" << node.decrease_true
            << ",\"formula\":" << formula_to_json(node.children[0].formula_snapshot)
            << ",\"proof\":" << proof_node_to_json(node.children[0]) << "},"
            << "{\"offset\":" << node.offset_false
-           << ",\"decrease\":" << node.reduced_cnt_false
+           << ",\"decrease\":" << node.decrease_false
            << ",\"formula\":" << formula_to_json(node.children[1].formula_snapshot)
            << ",\"proof\":" << proof_node_to_json(node.children[1]) << "}] }";
         return ss.str();
@@ -189,12 +189,12 @@ std::string CertLogger::proof_node_to_json(const ProofNode &node)
 
     if (node.type == "reduction" && node.children.size() == 1)
     {
-        int reward = (int)node.formula_snapshot.size() -
-                     (int)node.children[0].formula_snapshot.size();
+        int decrease = (int)node.formula_snapshot.size() -
+                       (int)node.children[0].formula_snapshot.size();
         ss << "{\"kind\":\"decompose\",\"transition\":\"semantic\""
            << ",\"formula\":" << formula
            << ",\"alternatives\":[{\"offset\":\"infer\""
-           << ",\"decrease\":" << reward
+           << ",\"decrease\":" << decrease
            << ",\"formula\":" << formula_to_json(node.children[0].formula_snapshot)
            << ",\"proof\":" << proof_node_to_json(node.children[0]) << "}]"
            << '}';
