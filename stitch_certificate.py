@@ -3,6 +3,61 @@ import json
 import sys
 
 
+def _declared_root(node):
+    fields = {"kind", "formula", "variable", "positive", "negative",
+              "singleton", "children"}
+    if set(node) != fields:
+        raise ValueError("invalid root family declaration")
+    if node["formula"] != [] or len(node["children"]) != 1:
+        raise ValueError("root declaration needs an empty seed and exactly one child")
+
+    variable = node["variable"]
+    positive, negative, singleton = node["positive"], node["negative"], node["singleton"]
+    if type(variable) is not int or variable < 2:
+        raise ValueError("root declaration requires an ordinary variable")
+    if (type(positive) is not int or type(negative) is not int or
+            positive < 1 or negative < 1 or positive + negative > 30 or
+            type(singleton) is not bool):
+        raise ValueError("invalid root degrees")
+    if singleton and negative != 1:
+        raise ValueError("singleton requires negative degree 1")
+
+    child = node["children"][0]
+    formula = child["formula"]
+    if not isinstance(formula, list) or len(formula) != positive + negative:
+        raise ValueError("root family differs from its declared degrees")
+
+    # The child may rename the declared variable and reorder its clauses.
+    variables = set()
+    tails = set()
+    positive_count = 0
+    for clause in formula:
+        if not isinstance(clause, list):
+            raise ValueError("root clause must be a list")
+        literals = [literal for literal in clause if type(literal) is int]
+        if len(literals) != 1 or abs(literals[0]) < 2:
+            raise ValueError("root clause requires one ordinary literal")
+
+        literal = literals[0]
+        variables.add(abs(literal))
+        positive_count += literal > 0
+        if literal < 0 and singleton and len(clause) == 1:
+            continue
+        if (literal < 0 and singleton) or len(clause) != 2:
+            raise ValueError("invalid root clause size")
+
+        tail = next(item for item in clause if type(item) is not int)
+        if (not isinstance(tail, dict) or set(tail) != {"tail", "kind"} or
+                type(tail["tail"]) is not int or tail["kind"] != "any" or
+                tail["tail"] in tails):
+            raise ValueError("root clause requires a distinct arbitrary tail")
+        tails.add(tail["tail"])
+
+    if len(variables) != 1 or positive_count != positive:
+        raise ValueError("root family differs from its declared degrees")
+    return child
+
+
 def assemble_certificate(input_file, output_file, numerator=12872, denominator=10000):
     nodes = {}
     referenced = set()
@@ -48,8 +103,7 @@ def assemble_certificate(input_file, output_file, numerator=12872, denominator=1
         raise ValueError(f"unreachable nodes: {sorted(set(nodes) - built)}")
 
     if root.get("kind") == "root_family":
-        from verifier.refine import declared_root
-        root = declared_root(root)
+        root = _declared_root(root)
 
     certificate = {
         "format": "maxsat-local-proof-v2",

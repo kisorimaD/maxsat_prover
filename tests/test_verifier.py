@@ -3,7 +3,8 @@ import os
 import tempfile
 import unittest
 
-from verifier.check import Checker, VerificationError, load_and_check
+from verifier.check import VerificationError, load_and_check
+from verifier.formula import assignment_residual, canonical_formula, parse_formula
 
 
 def call(formula):
@@ -19,12 +20,12 @@ def certificate(proof, numerator=2, denominator=1):
 
 
 class VerifierTests(unittest.TestCase):
-    def check_data(self, data):
+    def check_data(self, data, *, bottleneck=False):
         handle, name = tempfile.mkstemp(suffix=".json")
         try:
             with os.fdopen(handle, "w") as stream:
                 json.dump(data, stream)
-            return load_and_check(name)
+            return load_and_check(name, bottleneck=bottleneck)
         finally:
             os.unlink(name)
 
@@ -52,6 +53,15 @@ class VerifierTests(unittest.TestCase):
             ],
         }
         self.check_data(certificate(proof))
+
+        proof["alternatives"][1]["offset"] = True
+        with self.assertRaisesRegex(VerificationError, "assignment alternative"):
+            self.check_data(certificate(proof))
+
+        proof["alternatives"][1]["offset"] = 1
+        proof["alternatives"][1]["decrease"] = True
+        with self.assertRaisesRegex(VerificationError, "decrease.*must be an integer"):
+            self.check_data(certificate(proof))
 
     def test_grouping_and_absorption_semantically(self):
         # y=false is dominated by y=true.  The remaining x assignments are
@@ -88,10 +98,9 @@ class VerifierTests(unittest.TestCase):
                              "target": {"numerator": 2, "denominator": 1}, "proof": proof})
 
     def test_canonicalization_keeps_nonempty_tail_typed(self):
-        from verifier.formula import canonical_formula
         tail = {"tail": 0, "kind": "nonempty"}
-        self.assertNotEqual(canonical_formula([[tail], [tail, 2]]),
-                            canonical_formula([[2], [tail, 2]]))
+        self.assertNotEqual(canonical_formula(parse_formula([[tail], [tail, 2]])),
+                            canonical_formula(parse_formula([[2], [tail, 2]])))
 
     def test_wrong_reward_rejected(self):
         proof = {
@@ -155,26 +164,36 @@ class VerifierTests(unittest.TestCase):
 
     def test_invalid_target_rejected_before_traversal(self):
         for numerator, denominator in ((True, 1), (2.0, 1), (2, False), (1, 1)):
-            with self.subTest(target=(numerator, denominator)), self.assertRaises(ValueError):
-                Checker(numerator, denominator)
+            with (
+                self.subTest(target=(numerator, denominator)),
+                self.assertRaisesRegex(ValueError, "target must be a rational number"),
+            ):
+                data = certificate(call([]), numerator, denominator)
+                data["proof"] = None
+                self.check_data(data)
 
     def test_bottleneck_profile_rejects_other_target_root_and_degrees(self):
         root = [[2, {"tail": i, "kind": "any"}] for i in range(3)]
         root += [[-2, {"tail": i, "kind": "any"}] for i in range(3, 5)]
         proof = {"kind": "refine", "rule": "expose_at_clause", "formula": root,
                  "clause": 3, "variable": 3, "degrees": [[3, 2, False]], "children": []}
-        with self.assertRaisesRegex(VerificationError, "bottleneck target"):
-            Checker(2, 1, bottleneck=True).check(proof)
-        with self.assertRaisesRegex(VerificationError, "bottleneck root"):
-            Checker(12872, 10000, bottleneck=True).check(call([[2]]))
+        data = certificate(call([]), 12872, 10000)
+        data["proof"] = proof
         with self.assertRaisesRegex(VerificationError, "five baseline degree classes"):
-            Checker(12872, 10000, bottleneck=True).check(proof)
+            self.check_data(data, bottleneck=True)
+
+        data["proof"] = call([[2]])
+        with self.assertRaisesRegex(VerificationError, "bottleneck root"):
+            self.check_data(data, bottleneck=True)
+
+        data["target"] = {"numerator": 2, "denominator": 1}
+        with self.assertRaisesRegex(VerificationError, "bottleneck target"):
+            self.check_data(data, bottleneck=True)
 
     def test_numeric_tail_shorthand_rejected(self):
-        from verifier.formula import normalize_formula
         for literal in (0, 1, -1):
             with self.subTest(literal=literal), self.assertRaises(ValueError):
-                normalize_formula([[literal]])
+                parse_formula([[literal]])
 
     def test_old_format_rejected(self):
         data = certificate(call([]))
@@ -183,14 +202,14 @@ class VerifierTests(unittest.TestCase):
             self.check_data(data)
 
     def test_step51_assignment_in_both_polarities(self):
-        from verifier.formula import assignment_residual, normalize_formula
         for sign in (1, -1):
             formula = [[sign * 2, {"tail": i, "kind": "any"}] for i in range(3)]
             formula += [[-sign * 2], [-sign * 2, {"tail": 3, "kind": "any"}]]
             proof = {"kind": "decompose", "transition": "assign", "formula": formula,
                      "variable": 2, "alternatives": []}
+            parsed = parse_formula(formula)
             for value in (True, False):
-                residual, offset, decrease = assignment_residual(normalize_formula(formula), 2, value)
+                residual, offset, decrease = assignment_residual(parsed, 2, value)
                 self.assertEqual(residual, ())
                 proof["alternatives"].append({"offset": offset, "decrease": decrease,
                                                "formula": [], "proof": call([])})
