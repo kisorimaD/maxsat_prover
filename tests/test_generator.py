@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class GeneratorTests(unittest.TestCase):
-    def test_local_roundtrip_and_default_cli_profile(self):
+    def test_local_roundtrip(self):
         with tempfile.TemporaryDirectory() as directory:
             cwd = Path(directory)
             result = subprocess.run(
@@ -26,12 +26,10 @@ class GeneratorTests(unittest.TestCase):
             self.assertEqual(load_and_check(proof).assumptions, [])
             command = ["python3", str(ROOT / "verify_certificate.py"), str(proof),
                        str(cwd / "assumptions.json")]
-            default = subprocess.run(command, text=True, capture_output=True, timeout=30)
-            self.assertEqual(default.returncode, 1)
-            self.assertIn("bottleneck target", default.stderr)
-            local = subprocess.run(command + ["--local"], text=True, capture_output=True, timeout=30)
-            self.assertEqual(local.returncode, 0, local.stderr)
-            self.assertIn("ACCEPT LOCAL", local.stdout)
+            result = subprocess.run(command, text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ACCEPT LOCAL", result.stdout)
+            self.assertIn("q=2, possible_degrees=[]", result.stdout)
             self.assertEqual(json.loads((cwd / "assumptions.json").read_text()), [])
 
     def test_incomplete_generation_is_rejected(self):

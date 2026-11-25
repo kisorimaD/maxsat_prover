@@ -61,6 +61,7 @@ def _declared_root(node):
 def assemble_certificate(input_file, output_file, numerator=12872, denominator=10000):
     nodes = {}
     referenced = set()
+    possible_degrees = None
 
     with open(input_file, "r", encoding="utf-8") as stream:
         for line_number, line in enumerate(stream, 1):
@@ -74,6 +75,8 @@ def assemble_certificate(input_file, output_file, numerator=12872, denominator=1
             if node_id in nodes:
                 raise ValueError(f"duplicate node_id {node_id}")
             nodes[node_id] = record
+            if possible_degrees is None and record.get("rule") == "expose_at_clause":
+                possible_degrees = record["degrees"]
             referenced.update(str(value) for value in record.get("children_ids", []))
 
     roots = set(nodes) - referenced
@@ -108,6 +111,7 @@ def assemble_certificate(input_file, output_file, numerator=12872, denominator=1
     certificate = {
         "format": "maxsat-local-proof-v2",
         "target": {"numerator": numerator, "denominator": denominator},
+        "possible_degrees": possible_degrees if possible_degrees is not None else [],
         "proof": root,
     }
     with open(output_file, "w", encoding="utf-8") as stream:

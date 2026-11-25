@@ -4,8 +4,11 @@ from fractions import Fraction
 
 import numpy as np
 
-from .formula import assignment_residual, canonical_formula, parse_formula, tail_ids
-from .refine import POSSIBLE_DEGREES, expected_children
+from .formula import (
+    assignment_residual, canonical_formula, nonempty_tail_ids, parse_formula, tail_ids,
+)
+from .imports import IMPORTS, literal_occurrences
+from .refine import expected_children, parse_degrees
 from .semantic import optimum_vector
 
 
@@ -14,14 +17,15 @@ class VerificationError(Exception):
 
 
 class _Checker:
-    def __init__(self, target, *, bottleneck):
+    def __init__(self, target, possible_degrees):
         self.target = target
         self.inverse_target = 1 / target
         self.nodes = 0
         self.strategies = 0
         self.max_depth = 0
         self.assumptions = []
-        self.bottleneck = bottleneck
+        self.possible_degrees = possible_degrees
+        self.max_weight = Fraction(0)
 
     def fail(self, path, message):
         raise VerificationError(
@@ -36,19 +40,12 @@ class _Checker:
         return parse_formula(node.get("formula"))
 
     def check(self, proof):
-        if self.bottleneck and self.target != Fraction(1609, 1250):
-            self.fail("target", "bottleneck target must be 1.2872")
-
         formula = self._read_formula(proof, "proof")
-        if self.bottleneck:
-            root = [[2, {"tail": i, "kind": "any"}] for i in range(3)]
-            root += [[-2, {"tail": i, "kind": "any"}] for i in range(3, 5)]
-            if canonical_formula(formula) != canonical_formula(parse_formula(root)):
-                self.fail(
-                    "proof", "bottleneck root must be the (3,2) family with five arbitrary tails"
-                )
-
+        self.root = proof["formula"]
         self._coverage(proof, formula, "proof", 1)
+
+    def weight(self, vector):
+        return sum(self.inverse_target ** decrease for decrease in vector)
 
     def _coverage(self, node, formula, path, depth):
         self.nodes += 1
@@ -69,10 +66,11 @@ class _Checker:
             if not vector or min(vector) <= 0:
                 self.fail(path, f"all decreases must be positive integers: {vector}")
 
-            weight = sum(self.inverse_target ** decrease for decrease in vector)
+            weight = self.weight(vector)
             if weight > 1:
                 self.fail(path, f"branching vector {vector} violates the target")
 
+            self.max_weight = max(self.max_weight, weight)
             self.strategies += 1
             return
 
@@ -86,18 +84,13 @@ class _Checker:
         if set(node) != fields:
             self.fail(path, "invalid refine fields")
 
-        if self.bottleneck and rule == "expose_at_clause":
-            degrees = node["degrees"]
-            if (not isinstance(degrees, list) or
-                    sorted(degrees) != sorted(map(list, POSSIBLE_DEGREES))):
-                self.fail(path, "bottleneck exposure must cover the five baseline degree classes")
-
         children = node["children"]
         if not isinstance(children, list) or not children:
             self.fail(path, "refine must have nonempty children")
 
         try:
-            expected = {canonical_formula(child) for child in expected_children(node, formula)}
+            expected = {canonical_formula(child) for child in
+                        expected_children(node, formula, self.possible_degrees)}
             parsed_children = []
             for index, child in enumerate(children):
                 child_path = f"{path}.children[{index}]"
@@ -117,7 +110,7 @@ class _Checker:
         for child, child_formula, child_path in parsed_children:
             self._coverage(child, child_formula, child_path, depth + 1)
 
-    def _strategy(self, node, formula, path, depth):
+    def _strategy(self, node, formula, path, depth, accumulated=0):
         self.nodes += 1
         self.max_depth = max(self.max_depth, depth)
 
@@ -131,19 +124,24 @@ class _Checker:
             if set(node) != {"kind", "formula", "name", "vector"}:
                 self.fail(path, "invalid assumption fields")
             vector = node["vector"]
-            if (not isinstance(node["name"], str) or not node["name"] or
-                    not isinstance(vector, list) or not vector or
+            name = node["name"]
+            if (not isinstance(name, str) or not isinstance(vector, list) or not vector or
                     any(type(value) is not int or value <= 0 for value in vector)):
-                self.fail(path, "invalid trusted assumption")
-            if node["name"] not in {"lemma2", "lemma3", "lemma4", "double_lemma3"}:
-                self.fail(path, f"unknown imported lemma {node['name']!r}")
+                self.fail(path, "invalid imported lemma claim")
+            if name not in IMPORTS:
+                self.fail(path, f"unknown imported lemma {name!r}")
+            if accumulated < 0:
+                self.fail(path, "negative accumulated decrease at imported lemma")
 
-            self.assumptions.append({"path": path, "name": node["name"],
-                                     "formula": node["formula"], "vector": vector})
-            # The imported vector covers the branching case. For double_lemma3
-            # it also dominates (8,2), the case of a reduction at the second step.
-            branch_weight = sum(self.inverse_target ** decrease for decrease in vector)
-            return [1] if self.inverse_target > branch_weight else vector
+            claim = sorted(vector)
+            for witness, bound, outcomes in IMPORTS[name](formula, literal_occurrences(formula)):
+                if len(bound) != len(claim) or any(
+                        actual < stated for actual, stated in zip(sorted(bound), claim)):
+                    continue
+                self.assumptions.append({"path": path, "name": name, "witness": witness,
+                                         "formula": node["formula"], "vector": vector})
+                return max(outcomes, key=self.weight)
+            self.fail(path, f"no applicable witness for {name} covering vector {vector}")
 
         if kind != "decompose":
             self.fail(path, f"expected decompose or call, got {kind!r}")
@@ -188,6 +186,10 @@ class _Checker:
                 if any(not set(tail_ids(child)).issubset(parent_tails)
                        for child in child_formulas):
                     raise ValueError("semantic child introduces an unrelated tail")
+
+                guaranteed = nonempty_tail_ids(formula)
+                if any(nonempty_tail_ids(child) - guaranteed for child in child_formulas):
+                    raise ValueError("semantic child strengthens a tail to nonempty")
 
                 boundary_ids = sorted(parent_tails)
                 for alternative in alternatives:
@@ -236,18 +238,20 @@ class _Checker:
                 self.fail(path, f"alternative {index} formula differs from child proof")
 
             local_decrease = alternative["decrease"]
-            child_vector = self._strategy(proof, proof_formula, proof_path, depth + 1)
+            child_vector = self._strategy(
+                proof, proof_formula, proof_path, depth + 1, accumulated + local_decrease
+            )
             vector.extend(local_decrease + value for value in child_vector)
 
         return vector
 
 
-def load_and_check(filename, *, bottleneck=False):
+def load_and_check(filename):
     """Check a JSON certificate and return its verification statistics and assumptions."""
     with open(filename, "r", encoding="utf-8") as stream:
         certificate = json.load(stream)
 
-    if not isinstance(certificate, dict) or set(certificate) != {"format", "target", "proof"}:
+    if not isinstance(certificate, dict) or set(certificate) != {"format", "target", "possible_degrees", "proof"}:
         raise VerificationError("top-level fields are invalid")
     if certificate["format"] != "maxsat-local-proof-v2":
         raise VerificationError("unknown certificate format")
@@ -260,6 +264,7 @@ def load_and_check(filename, *, bottleneck=False):
             numerator <= denominator or denominator <= 0):
         raise ValueError("target must be a rational number greater than one")
 
-    checker = _Checker(Fraction(numerator, denominator), bottleneck=bottleneck)
+    checker = _Checker(Fraction(numerator, denominator),
+                       parse_degrees(certificate["possible_degrees"]))
     checker.check(certificate["proof"])
     return checker

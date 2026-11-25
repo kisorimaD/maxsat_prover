@@ -69,40 +69,35 @@ new variable's occurrences.
 
 ## Verification contract
 
-By default the verifier requires the paper's profile:
+The verifier reads the root, exact rational `target` and `possible_degrees`
+from the certificate. Each exposure must cover the same set of degree classes,
+in any order. The assembler takes the list from the first logged exposure and
+writes an empty list for certificates without exposures.
 
-- target `1.2872` (exactly `1609/1250`);
-- root `(x∨?1)(x∨?2)(x∨?3)(¬x∨?4)(¬x∨?5)`, up to renaming;
-- exposure classes `(3,1)-singleton`, `(2,2)`, `(3,2)`, `(2,3)`,
-  `(4,1)-singleton`.
+The verifier checks all refinement children, both sides of assignments,
+semantic decompositions for every boundary valuation, clause decreases and
+the final branching weights. Semantic decompositions preserve the provenance
+of nonempty tails. Step 5.1 is expanded into an assignment proof with both
+residual formulas.
 
-It checks all refinement children, both sides of assignments, semantic
-decompositions for every boundary valuation, clause decreases and the final
-branching vectors. Step 5.1 is expanded into an ordinary assignment proof,
-including both residual formulas; it is not an imported assumption.
+The verifier checks the applicability and claimed branching vector of every
+`lemma2`, `lemma3`, `lemma4` and `double_lemma3` import. It uses the worst
+weight among the applicable branching and reduction outcomes. The import log
+records the formula, vector, path and witness for each import.
 
-Only `lemma2`, `lemma3`, `lemma4` and `double_lemma3` are allowed as imports.
-These refer to the baseline results identified in the paper, not to lemmas
-of the same numbers in this project's paper. Every imported occurrence is
-written to `verification_assumptions.json`, with its formula, vector and path.
-The successful result is `ACCEPT BOTTLENECK RELATIVE TO IMPORTED LEMMAS`.
-
-The checker uses the larger weight of the logged branching case and a
-one-clause reduction. It relies on the source lemmas and their applicability,
-including the baseline algorithm's global structural restrictions. The
-completeness of the five exposure classes for Step 5.4 is the
-argument in §5.2 of the paper. An accepted certificate is a local analysis
-relative to these premises, not an independently verified complete MaxSAT solver.
-
-For another local family or target, opt out of the paper's profile explicitly:
+An accepted certificate certifies the declared local family, conditional on
+the imported mathematical results and the completeness of the declared
+classes for the intended algorithm step. The output lists the root, target,
+classes, strategy and import counts, and maximum certified weight. To check
+another certificate, run:
 
 ```sh
-python3 verify_certificate.py local_proof.json local_assumptions.json --local
+python3 verify_certificate.py local_proof.json local_assumptions.json
 ```
 
-This reports `ACCEPT LOCAL`, with the same qualification if imports remain.
 Only certificate format `maxsat-local-proof-v2` and explicitly typed tails
-are supported. Old v1 certificates and numeric tail shorthands must be regenerated.
+are supported. Regenerate certificates that lack `possible_degrees` or use
+numeric tail shorthands.
 
 ## Tests and interactive search
 

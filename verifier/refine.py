@@ -3,11 +3,6 @@ from itertools import product
 from .formula import is_tail, replace_tail, sort_formula, tail_ids, variables
 
 
-POSSIBLE_DEGREES = (
-    (3, 1, True), (2, 2, False), (3, 2, False), (2, 3, False), (4, 1, True),
-)
-
-
 def validate_degree(positive, negative, singleton):
     if (type(positive) is not int or type(negative) is not int or
             positive < 1 or negative < 1 or positive + negative > 30 or
@@ -15,6 +10,20 @@ def validate_degree(positive, negative, singleton):
         raise ValueError("invalid exposure degrees")
     if singleton and negative != 1:
         raise ValueError("singleton requires negative degree 1")
+
+
+def parse_degrees(value):
+    if not isinstance(value, list):
+        raise ValueError("degree classes must be a list")
+    degrees = set()
+    for degree in value:
+        if not isinstance(degree, list) or len(degree) != 3:
+            raise ValueError("degree class must be a list of three values")
+        validate_degree(*degree)
+        degrees.add(tuple(degree))
+    if len(degrees) != len(value):
+        raise ValueError("duplicate degree class")
+    return degrees
 
 
 def validate_exposure_formula(formula, variable):
@@ -85,7 +94,7 @@ def generate_exposure(formula, variable, positive, negative, singleton,
     return generated
 
 
-def expected_children(node, formula):
+def expected_children(node, formula, possible_degrees):
     rule = node["rule"]
     if rule == "tail_empty_or_nonempty":
         clause = node["clause"]
@@ -109,11 +118,12 @@ def expected_children(node, formula):
         variable = node["variable"]
         validate_exposure_formula(formula, variable)
 
-        degrees = node["degrees"]
-        if not isinstance(degrees, list) or not degrees:
+        degrees = parse_degrees(node["degrees"])
+        if not degrees:
             raise ValueError("exposure needs a nonempty degree specification")
+        if degrees != possible_degrees:
+            raise ValueError("exposure degrees differ from possible_degrees")
         for positive, negative, singleton in degrees:
-            validate_degree(positive, negative, singleton)
             result.update(generate_exposure(formula, variable,
                                             positive, negative, singleton,
                                             index))

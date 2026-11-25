@@ -53,6 +53,11 @@ def tail_ids(formula):
                    if is_tail(literal)})
 
 
+def nonempty_tail_ids(formula):
+    return {literal[1] for clause in formula for literal in clause
+            if is_tail(literal) and literal[2] == "nonempty"}
+
+
 def variables(formula):
     return sorted({abs(literal) for clause in formula for literal in clause
                    if type(literal) is int})

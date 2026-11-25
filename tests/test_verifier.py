@@ -2,9 +2,11 @@ import json
 import os
 import tempfile
 import unittest
+from fractions import Fraction
 
 from verifier.check import VerificationError, load_and_check
 from verifier.formula import assignment_residual, canonical_formula, parse_formula
+from verifier.semantic import optimum_vector
 
 
 def call(formula):
@@ -15,17 +17,18 @@ def certificate(proof, numerator=2, denominator=1):
     return {
         "format": "maxsat-local-proof-v2",
         "target": {"numerator": numerator, "denominator": denominator},
+        "possible_degrees": [],
         "proof": {"kind": "strategy", "formula": proof["formula"], "proof": proof},
     }
 
 
 class VerifierTests(unittest.TestCase):
-    def check_data(self, data, *, bottleneck=False):
+    def check_data(self, data):
         handle, name = tempfile.mkstemp(suffix=".json")
         try:
             with os.fdopen(handle, "w") as stream:
                 json.dump(data, stream)
-            return load_and_check(name, bottleneck=bottleneck)
+            return load_and_check(name)
         finally:
             os.unlink(name)
 
@@ -91,11 +94,13 @@ class VerifierTests(unittest.TestCase):
             "children": [strategy([[2]]), strategy([[nonempty, 2]])],
         }
         self.check_data({"format": "maxsat-local-proof-v2",
-                         "target": {"numerator": 2, "denominator": 1}, "proof": proof})
+                         "target": {"numerator": 2, "denominator": 1},
+                         "possible_degrees": [], "proof": proof})
         proof["children"].pop()
         with self.assertRaisesRegex(VerificationError, "coverage mismatch"):
             self.check_data({"format": "maxsat-local-proof-v2",
-                             "target": {"numerator": 2, "denominator": 1}, "proof": proof})
+                             "target": {"numerator": 2, "denominator": 1},
+                         "possible_degrees": [], "proof": proof})
 
     def test_canonicalization_keeps_nonempty_tail_typed(self):
         tail = {"tail": 0, "kind": "nonempty"}
@@ -123,11 +128,58 @@ class VerifierTests(unittest.TestCase):
             self.check_data(certificate(proof))
 
     def test_assumption_is_reported(self):
-        formula = [[2], [-2]]
+        formula = [[2, 3], [2, 4], [-2]]
         proof = {"kind": "assumption", "formula": formula,
-                 "name": "lemma3", "vector": [1, 8]}
+                 "name": "lemma3", "vector": [8, 1]}
         checker = self.check_data(certificate(proof))
         self.assertEqual(checker.assumptions[0]["name"], "lemma3")
+        self.assertEqual(checker.assumptions[0]["witness"], [2])
+
+        proof["vector"] = [1, 9]
+        with self.assertRaisesRegex(VerificationError, "no applicable witness"):
+            self.check_data(certificate(proof))
+        proof["vector"] = [1, 8]
+        proof["formula"] = [[2, -2], [2, 4]]
+        with self.assertRaisesRegex(VerificationError, "no applicable witness"):
+            self.check_data(certificate(proof))
+
+    def test_lemma2_requires_nonempty_remainder(self):
+        tail = {"tail": 0, "kind": "any"}
+        proof = {"kind": "assumption", "name": "lemma2", "vector": [3, 3],
+                 "formula": [[2, 3], [2, 4], [2, 5], [-2, tail]]}
+        with self.assertRaisesRegex(VerificationError, "no applicable witness"):
+            self.check_data(certificate(proof))
+
+        tail["kind"] = "nonempty"
+        self.assertEqual(self.check_data(certificate(proof)).max_weight, Fraction(1, 2))
+
+    def test_lemma4_uses_reduction_when_enough_units_are_guaranteed(self):
+        tail = {"tail": 0, "kind": "any"}
+        proof = {"kind": "assumption", "name": "lemma4", "vector": [2, 5],
+                 "formula": [[2], [2], [-2, tail], [-2, tail]]}
+        self.assertEqual(self.check_data(certificate(proof)).max_weight, Fraction(1, 4))
+
+    def test_import_rejects_negative_accumulated_decrease(self):
+        parent = [[2, 3], [2, 4], [-2]]
+        child = parent + [[]]
+        assumption = {"kind": "assumption", "formula": child,
+                      "name": "lemma3", "vector": [1, 8]}
+        proof = {"kind": "decompose", "transition": "semantic", "formula": parent,
+                 "alternatives": [{"offset": 0, "decrease": -1,
+                                   "formula": child, "proof": assumption}]}
+        with self.assertRaisesRegex(VerificationError, "negative accumulated decrease"):
+            self.check_data(certificate(proof))
+
+    def test_semantic_transition_cannot_strengthen_tail(self):
+        parent = [[2, {"tail": 0, "kind": "any"}], [3]]
+        child = [[2, {"tail": 0, "kind": "nonempty"}]]
+        self.assertEqual(list(optimum_vector(parse_formula(parent), [0]) - 1),
+                         list(optimum_vector(parse_formula(child), [0])))
+        proof = {"kind": "decompose", "transition": "semantic", "formula": parent,
+                 "alternatives": [{"offset": 1, "decrease": 1,
+                                   "formula": child, "proof": call(child)}]}
+        with self.assertRaisesRegex(VerificationError, "strengthens a tail to nonempty"):
+            self.check_data(certificate(proof))
 
     def test_imported_reduction_can_make_an_enclosing_branch_too_expensive(self):
         tail = {"tail": 0, "kind": "any"}
@@ -172,23 +224,35 @@ class VerifierTests(unittest.TestCase):
                 data["proof"] = None
                 self.check_data(data)
 
-    def test_bottleneck_profile_rejects_other_target_root_and_degrees(self):
-        root = [[2, {"tail": i, "kind": "any"}] for i in range(3)]
-        root += [[-2, {"tail": i, "kind": "any"}] for i in range(3, 5)]
-        proof = {"kind": "refine", "rule": "expose_at_clause", "formula": root,
-                 "clause": 3, "variable": 3, "degrees": [[3, 2, False]], "children": []}
-        data = certificate(call([]), 12872, 10000)
+    def test_exposure_must_cover_declared_classes(self):
+        tail = {"tail": 0, "kind": "any"}
+        children = []
+        for formula in ([[2]], [[2, 3, tail], [-3]]):
+            strategy = {"kind": "decompose", "transition": "semantic", "formula": formula,
+                        "alternatives": [{"offset": len(formula), "decrease": len(formula),
+                                          "formula": [], "proof": call([])}]}
+            children.append(certificate(strategy)["proof"])
+
+        proof = {"kind": "refine", "rule": "expose_at_clause", "formula": [[2, tail]],
+                 "clause": 0, "variable": 3, "degrees": [[1, 1, True]], "children": children}
+        data = certificate(call([]))
         data["proof"] = proof
-        with self.assertRaisesRegex(VerificationError, "five baseline degree classes"):
-            self.check_data(data, bottleneck=True)
+        data["possible_degrees"] = [[2, 1, True], [1, 1, True]]
+        with self.assertRaisesRegex(VerificationError, "differ from possible_degrees"):
+            self.check_data(data)
 
-        data["proof"] = call([[2]])
-        with self.assertRaisesRegex(VerificationError, "bottleneck root"):
-            self.check_data(data, bottleneck=True)
+        data["possible_degrees"].pop(0)
+        checker = self.check_data(data)
+        self.assertEqual(checker.possible_degrees, {(1, 1, True)})
+        self.assertEqual(checker.strategies, 2)
 
-        data["target"] = {"numerator": 2, "denominator": 1}
-        with self.assertRaisesRegex(VerificationError, "bottleneck target"):
-            self.check_data(data, bottleneck=True)
+        for invalid in ([[True, 1, True]], [[1, 2, True]], [[1, 1, True]] * 2):
+            for container, field in ((data, "possible_degrees"), (proof, "degrees")):
+                original = container[field]
+                container[field] = invalid
+                with self.assertRaises((VerificationError, ValueError)):
+                    self.check_data(data)
+                container[field] = original
 
     def test_numeric_tail_shorthand_rejected(self):
         for literal in (0, 1, -1):
